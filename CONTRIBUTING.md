@@ -12,11 +12,11 @@ Our project and everyone participating in it is governed by the [Code of Conduct
 
 ### Reporting Bugs
 
-Before reporting a bug, please take a look through the [issue tracker](https://github.com/CIGLR/GreatLakes-TempSensors/issues) to see if the issue has already been reported. If not, create a bug report that provides as much detail as possible, such as steps to reproduce, expected outcomes, and actual outcomes.
+Before reporting a bug, please take a look through the [issue tracker](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/issues) to see if the issue has already been reported. If not, create a bug report that provides as much detail as possible, such as steps to reproduce, expected outcomes, and actual outcomes.
 
 ### Suggesting Enhancements
 
-If you have an idea for an improvement or a new feature, please check if it has already been suggested or not in the [issue tracker](https://github.com/CIGLR/GreatLakes-TempSensors/issues). Your suggestion should include as much detail as possible so that others can understand and consider it.
+If you have an idea for an improvement or a new feature, please check if it has already been suggested or not in the [issue tracker](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/issues). Your suggestion should include as much detail as possible so that others can understand and consider it.
 
 ### Pull Requests
 
