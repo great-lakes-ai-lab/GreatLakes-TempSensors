@@ -16,7 +16,7 @@ The Great Lakes are a critical natural resource, providing drinking water, trans
 
 Clone the repository and install the required Python packages:
  
-    git clone https://github.com/CIGLR/GreatLakes-TempSensors.git
+    git clone https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors.git
     cd GreatLakes-TempSensors
     pip install -r requirements.txt
 
@@ -33,14 +33,14 @@ We've set several milestones to organize the progress of the project:
 - Analysis and Site Recommendation
 - Reporting and Documentation
 
-The detailed timeline is available under the repository's [Projects](https://github.com/CIGLR/GreatLakes-TempSensors/projects) tab.
+The detailed timeline is available under the repository's [Projects](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/projects) tab.
 
 ## Mentors & Contributors
 - Dani Jones (CIGLR, University of Michigan)
 - Russ Miller (CIGLR, University of Michigan)
 - Jennifer Boehme (Great Lakes Observing System)
 
-For a full list of contributors, please see the [contributors](https://github.com/CIGLR/GreatLakes-TempSensors/graphs/contributors) page.
+For a full list of contributors, please see the [contributors](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/graphs/contributors) page.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
