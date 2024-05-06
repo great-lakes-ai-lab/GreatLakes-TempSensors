@@ -1,0 +1,20 @@
+# requirements.txt
+# This file contains the list of Python dependencies required for the GreatLakes-TempSensors project.
+# Install these packages using the following command:
+# pip install -r requirements.txt
+
+# Main data handling and computation libraries
+numpy==1.20.2
+pandas==1.2.4
+
+# Plotting library
+matplotlib==3.4.1
+
+# Machine learning library
+scikit-learn==0.24.2
+
+# TensorFlow is the deep learning framework used by DeepSensor
+tensorflow==2.5.0
+
+# Specific machine learning model for sensor placement
+DeepSensor==0.3.6  # Latest version as of 3 May 2024
