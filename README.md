@@ -4,7 +4,17 @@
 This repository is dedicated to the Great Lakes Summer Fellows Program project focused on optimizing the placement of temperature sensors across the Great Lakes using advanced machine learning techniques. By leveraging the DeepSensor framework, we aim to improve the spatial network design for environmental monitoring, providing valuable insights into the Great Lakes' surface temperature variability. This project will serve as a proof-of-concept, allowing for expansion into other key variables, such as nutrients.
 
 ## Background
-The Great Lakes are a critical natural resource, providing drinking water, transportation routes, recreational opportunities, and supporting a diverse ecosystem. However, monitoring such a vast area is challenging due to logistical constraints and resource limitations. This project seeks to utilize convolutional Gaussian neural processes, as formulated in the DeepSensor tool, to propose a strategic placement of temperature sensors, thereby optimizing the observation network.
+The Great Lakes are a critical natural resource, providing drinking water, transportation routes, recreational opportunities, and supporting a diverse ecosystem. However, monitoring such a vast area is challenging due to logistical constraints and resource limitations. It is crucial to make the most efficient use of available observing platforms (e.g. buoys, research vessels). This project seeks to utilize convolutional Gaussian neural processes, as formulated in the DeepSensor tool, to propose a strategic placement of temperature sensors, thereby optimizing the observation network.
+
+### Overarching Goal
+Our overall objective is to develop a quantitative framework for strategic placement of the next generation of Great Lakes observing stations in order to best capture surface temperature variability. To phrase this goal as a research question, “where should the next generation of temperature measurement sensors be placed in order to most efficiently improve our quantitative understanding of Great Lakes surface temperature variability?”
+
+### Project Activities
+The summer fellow will use DeepSensor, an open source Python package for probabilistically modeling environmental data with neural processes, to characterize Great Lakes surface temperature and to make informed suggestions for future temperature sensor locations. Specifically, the student will:
+
+- Use existing observational and model data to train DeepSensor on Great Lakes surface temperature
+- Create a list of target observing sites that would most efficiently reduce uncertainties in our quantitative representation of Great Lakes surface temperature variability
+- Prepare a brief report and final presentation to visualize, characterize, and document the results
 
 ## Getting Started
 ### Prerequisites
