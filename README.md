@@ -27,11 +27,7 @@ Instructions on how to train the DeepSensor model, analyze the data, and propose
 Contributions to this project are welcome! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) file for guidelines on how to contribute effectively.
 
 ## Project Milestones
-We've set several milestones to organize the progress of the project:
-- Data Preparation and Visualization 
-- Model Training and Tuning
-- Analysis and Site Recommendation
-- Reporting and Documentation
+We've set several [Milestones](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/milestones) to organize the progress of the project, including a review of the literature and other resources, data preparation and visualization, model training and runing, analysis and site recommendation, reporting and documentation, and final presentation.
 
 The detailed timeline is available under the repository's [Projects](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/projects) tab.
 
@@ -46,15 +42,15 @@ For a full list of contributors, please see the [contributors](https://github.co
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
-Thank you to the SOAR funding initiative at CIGLR for supporting this research work.
+Thank you to the NOAA SOAR funding initiative for supporting this research work.
 
 ## References
 For details on the methodologies and algorithms used in this project, refer to the following paper:
 
 Andersson, T., Bruinsma, W., Markou, S., Requeima, J., et al. (2023). Environmental sensor placement with convolutional Gaussian neural processes. Environmental Data Science, 2, E32. [doi:10.1017/eds.2023.22](https://doi.org/10.1017/eds.2023.22)
 
-Link to the DeepSensor documentation:  
-[https://github.com/alan-turing-institute/deepsensor](https://github.com/alan-turing-institute/deepsensor)
+Further resources included in the DeepSensor repository:  
+[https://github.com/alan-turing-institute/deepsensor/resources.html](https://alan-turing-institute.github.io/deepsensor/resources.html)
 
 
 
