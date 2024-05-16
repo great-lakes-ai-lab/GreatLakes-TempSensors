@@ -42,9 +42,11 @@ We've set several [Milestones](https://github.com/CIGLR-ai-lab/GreatLakes-TempSe
 The detailed timeline is available under the repository's [Projects](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/projects) tab.
 
 ## Mentors & Contributors
-- Dani Jones (CIGLR, University of Michigan)
-- Russ Miller (CIGLR, University of Michigan)
-- Jennifer Boehme (Great Lakes Observing System)
+- Dani Jones (CIGLR)
+- Russ Miller (CIGLR)
+- Shelby Brunner (Great Lakes Observing System)
+- David Cannon (CIGLR)
+- Hazem Abdelhady (CIGLR)
 
 For a full list of contributors, please see the [contributors](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/graphs/contributors) page.
 
