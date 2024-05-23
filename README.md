@@ -50,6 +50,9 @@ The detailed timeline is available under the repository's [Projects](https://git
 
 For a full list of contributors, please see the [contributors](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/graphs/contributors) page.
 
+## Connections with the DeepSensor development community
+The Alan Turing Institute hosts the development of this software, in part by maintaining a Slack channel. For info on how to join the Slack channel, [visit the DeepSensor Repository and check out the README](https://github.com/alan-turing-institute/deepsensor).
+
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
