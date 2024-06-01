@@ -22,7 +22,77 @@ The summer fellow will use DeepSensor, an open source Python package for probabi
 - Familiarity with machine learning concepts and data analysis
 - Access to high-performance computing resources (provided for the project)
 
-## DeepSensor Environment Setup
+## DeepSensor Environment Setup [Non-GitHub Version]
+
+Below are some instructions for setting up your environment for the first time and using it thereafter in the interactive Jupyter notebook environment on the Great Lakes HPC platform. This should prevent you from having to `pip install deepsensor` every time that you want to run a notebook. (This version does not use GitHub).
+
+### Environment Setup (First Time)
+
+1. **Activate Your Virtual Environment:**
+   
+   If you don't have a virtual environment already, create one using `python -m venv` or `conda create`. For example, with `venv`:
+   
+   ```bash
+   module load python3.10-anaconda/2023.03  # Load the Anaconda module on U-M HPC
+   python -m venv ~/deepsensor_env  # Create a virtual environment named "deepsensor_env" in your home directory
+   source ~/deepsensor_env/bin/activate  # Activate the virtual environment
+   ```
+
+2. **Install Required Packages:**
+   
+   Install the required packages listed in the `requirements.txt` file:
+
+   ```bash
+   pip install deepsensor==0.3.6 tensorflow==2.16.1 tensorflow-io-gcs-filesystem==0.37.0 tensorflow-probability==0.24.0
+   ```
+
+   This will install all the necessary dependencies for the DeepSensor project. Optionally, if you want to use pytorch, install that instead:
+
+   ```bash
+   pip install deepsensor==0.3.6 torch==2.3.0
+   ```
+
+### Using the Environment (Thereafter)
+
+After setting up the environment for the first time, follow these steps to use it thereafter:
+
+1. **[If you want to work in the terminal] Activate Your Virtual Environment:**
+   
+   If you want to work in the terminal, activate your virtual environment if it's not already activated:
+
+   ```bash
+   source ~/deepsensor_env/bin/activate  # Activate the virtual environment
+   ```
+
+   If, instead, you want to use a notebook, skip this step and proceed to Step 2. 
+
+2. **[If you wan to use Jupyter Notebook] Start an Interactive Jupyter Notebook Session:**
+
+    If you want to use a Jupyter Notebook interfact, use these steps instead:
+
+   - Log in to the Great Lakes HPC platform.
+   - Navigate to the "Interactive Apps" section.
+   - Select "Jupyter Notebook" and configure the job submission form as needed.
+   - Specify the Anaconda Python module (`python3.10-anaconda/2023.03`), Slurm account, partition, number of hours, cores, memory, and source the setup file (`~/setup_deepsensor_env.sh`).
+   - Submit the job and wait for it to start.
+   - Once the job starts, open the provided link to access the Jupyter Notebook interface.
+   - Your virtual environment will be activated automatically, providing access to the DeepSensor project and its dependencies.
+
+4. **Run Your DeepSensor Notebooks:**
+   
+   Within the Jupyter Notebook interface, navigate to your DeepSensor project directory and open the desired notebook.
+   
+5. **Deactivate Your Virtual Environment (Optional):**
+   
+   When you're done working, you can deactivate your virtual environment:
+   
+   ```bash
+   deactivate
+   ```
+
+   This will return you to your base environment.
+
+## DeepSensor Environment Setup [GitHub Version]
 
 Below are some instructions for setting up your environment for the first time and using it thereafter in the interactive Jupyter notebook environment on the Great Lakes HPC platform. This should prevent you from having to `pip install deepsensor` every time that you want to run a notebook.
 
