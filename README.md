@@ -52,6 +52,16 @@ Below are some instructions for setting up your environment for the first time a
    pip install deepsensor==0.3.6 torch==2.3.0
    ```
 
+3. **Create a Setup File:**
+
+   Create a setup file that will activate your virtual environment. Save this file somewhere in your home directory, for example, `~/setup_deepsensor_env.sh`:
+
+   ```bash
+   echo 'module load python3.10-anaconda/2023.03' > ~/setup_deepsensor_env.sh
+   echo 'source ~/deepsensor_env/bin/activate' >> ~/setup_deepsensor_env.sh
+   chmod +x ~/setup_deepsensor_env.sh
+   ```
+
 ### Using the Environment (Thereafter)
 
 After setting up the environment for the first time, follow these steps to use it thereafter:
@@ -64,9 +74,14 @@ After setting up the environment for the first time, follow these steps to use i
    source ~/deepsensor_env/bin/activate  # Activate the virtual environment
    ```
 
+   Alternatively, you can run the setup script that you created above:
+   ```bash
+   ~/setup_deepsensor_env.sh
+   ```
+
    If, instead, you want to use a notebook, skip this step and proceed to Step 2. 
 
-2. **[If you wan to use Jupyter Notebook] Start an Interactive Jupyter Notebook Session:**
+1. **[If you wan to use Jupyter Notebook] Start an Interactive Jupyter Notebook Session:**
 
     If you want to use a Jupyter Notebook interfact, use these steps instead:
 
