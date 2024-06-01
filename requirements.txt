@@ -3,23 +3,26 @@
 # Install these packages using the following command:
 # pip install -r requirements.txt
 
+# Note that we are also using the following module on Great Lakes HPC at U-M:
+# python3.10-anaconda/2023.03
+
 # Main data handling and computation libraries
-numpy==1.20.2
-pandas==1.2.4
+numpy>=1.20.2
+pandas>=1.2.4
 
 # Plotting library
-matplotlib==3.4.1
+matplotlib>=3.4.1
 
 # Machine learning library
-scikit-learn==0.24.2
+scikit-learn>=0.24.2
 
 # TensorFlow is the deep learning framework used by DeepSensor
-tensorflow==2.16.1
-tensorflow-io-gcs-filesystem==0.37.0
-tensorflow-probability==0.24.0
+tensorflow>=2.16.1
+tensorflow-io-gcs-filesystem>=0.37.0
+tensorflow-probability>=0.24.0
 
 # pyTorch is also an option for deep learning 
-#torch==2.3.0
+#torch>=2.3.0
 
 # Specific machine learning model for sensor placement
 DeepSensor==0.3.6  # Latest version as of 3 May 2024
