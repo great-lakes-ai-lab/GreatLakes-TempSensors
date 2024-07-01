@@ -50,6 +50,16 @@ To set up DeepSensor for non-GPU use, follow these instructions:
 
     Note: PyTorch will default to the CPU-only version if you don't have the CUDA toolkit installed.
 
+4. **Additional Setup for Jupyter Notebooks:**
+
+   If you would like to use this environment in a Jupyter notebook, you have to add the virtual environment as a Jupyter kernel:
+
+   ```bash
+   pip install ipykernel
+   python -m ipykernel install --user --name=deepsensor_env --display-name "Python (deepsensor_env)"
+   ```
+   If successful, you will see `Installed kernelspec` message on the command line. 
+
 ### Using the Environment Thereafter
 
 After the first-time setup, you can use your environment on subsequent logins to the HPC platform:
@@ -76,7 +86,7 @@ After the first-time setup, you can use your environment on subsequent logins to
 
 ### For Jupyter Notebook Users
 
-To use a non-GPU environment with Jupyter Notebooks on U-M HPC:
+After you have added your virtual environment as a Jupyter kernel (see above), you can carry out the following steps to use your virtual environment as a Jupyter notebook. To use a non-GPU environment with Jupyter Notebooks on U-M HPC:
 
 1. Navigate to the Great Lakes HPC Jupyter service and fill out the job submission form as needed.
 2. In the "Module commands" field, only specify the Anaconda Python module, as no GPU resources are requested.
@@ -113,6 +123,15 @@ To initially configure the environment for GPU-accelerated work:
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
     pip3 install deepsensor
     ```
+    
+4. Additional Setup for Jupyter Notebooks:
+
+   If you would like to use this environment in a Jupyter notebook, you have to add the virtual environment as a Jupyter kernel:
+   ```bash
+   pip install ipykernel
+   python -m ipykernel install --user --name=deepsensor_env_gpu --display-name "Python (deepsensor_env_gpu)"
+   ```
+   If successful, you will see `Installed kernelspec` message on the command line. 
 
 ### Using the Environment Thereafter
 Once the initial setup is complete, you can activate your environment with:
