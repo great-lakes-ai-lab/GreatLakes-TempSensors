@@ -9,7 +9,6 @@ This guide outlines procedures to configure the DeepSensor environment on the Gr
   - [Using the Environment Thereafter](#using-the-environment-thereafter)
   - [PyTorch GPU Support](#pytorch-gpu-support)
 - [Working with the GitHub Repository](#working-with-the-github-repository)
-- [Working without the GitHub Repository](#working-without-the-github-repository)
 - [Setting Up a Jupyter Notebook Session on Great Lakes HPC](#setting-up-a-jupyter-notebook-session-on-great-lakes-hpc)
 - [Slurm Script for Command Line GPU Jobs](#slurm-script-for-command-line-gpu-jobs)
 
