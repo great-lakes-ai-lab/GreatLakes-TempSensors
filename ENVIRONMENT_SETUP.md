@@ -112,9 +112,8 @@ To initially configure the environment for GPU-accelerated work:
 
     ```bash
     pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    pip3 install deepsensor
     ```
-
-Install DeepSensor within your virtual environment as needed.
 
 ### Using the Environment Thereafter
 Once the initial setup is complete, you can activate your environment with:
@@ -138,15 +137,7 @@ cd deepsensor  # Navigate to the repository directory
 # Then proceed with the GPU or non-GPU environment setup as detailed above.
 ```
 
-## Working without the GitHub Repository
-To use DeepSensor without incorporating additional functions from the GitHub repository:
-
-```bash
-# Follow the GPU or non-GPU environment setup instructions without cloning the repository. Install DeepSensor via pip.
-pip install deepsensor
-pip install torch
-# Proceed with your analysis and model training.
-```
+To use DeepSensor without incorporating additional functions from the GitHub repository, simply skip the previous step. 
 
 ## Setting Up a Jupyter Notebook Session on Great Lakes HPC
 
