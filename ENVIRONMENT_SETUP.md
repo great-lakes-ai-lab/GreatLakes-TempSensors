@@ -97,6 +97,8 @@ virtual environment in parentheses (see image below for example).
 
 ![image](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/assets/11757453/2b4c7ee5-29f7-4116-b08a-adad1e48222e)
 
+If you are working with an existing Jupyter notebook, you can select `Kernel -> change kernel` from the task bar and select the kernel that you wish to use, corresponding to the virtual environment in which you want to work. 
+
 ## GPU Environment Setup with Pytorch
 
 ### Setting Up for the First Time
@@ -207,6 +209,8 @@ Please note that these instructions assume you have already created and configur
 Once your Jupyter Notebook session has started, make sure to select the kernel that corresponds to your virtual environment, as shown in the image below:
 
 ![image](https://github.com/CIGLR-ai-lab/GreatLakes-TempSensors/assets/11757453/489eb463-fa26-4104-88d8-6ee3a62ec881)
+
+If you are working with an existing Jupyter notebook, you can select `Kernel -> change kernel` from the task bar and select the kernel that you wish to use, corresponding to the virtual environment in which you want to work. 
 
 ## Slurm Script for Command Line GPU Jobs
 Use the following template for submitting GPU jobs via the command line:
