@@ -22,12 +22,14 @@ cartopy>=0.23.0
 scikit-learn>=0.24.2
 
 # TensorFlow is the deep learning framework used by DeepSensor
-#tensorflow>=2.16.1
-#tensorflow-io-gcs-filesystem>=0.37.0
-#tensorflow-probability>=0.24.0
+tensorflow>=2.16.1
+tensorflow-io-gcs-filesystem>=0.37.0
+tensorflow-probability>=0.24.0
 
 # pyTorch is also an option for deep learning 
-#torch>=2.3.0
+torch>=2.3.0
+torchvision
+torchaudio
 
 # Specific machine learning model for sensor placement
 DeepSensor==0.3.6  # Latest version as of 3 May 2024
