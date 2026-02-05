@@ -1,0 +1,83 @@
+{
+  "os": "Linux-4.18.0-477.81.1.el8_8.x86_64-x86_64-with-glibc2.28",
+  "python": "CPython 3.10.9",
+  "startedAt": "2025-06-07T17:35:58.809529Z",
+  "program": "<python with no main file>",
+  "git": {
+    "remote": "https://github.com/great-lakes-ai-lab/GreatLakes-TempSensors.git",
+    "commit": "914391b8227a48fe051834e8a4ce1a6ce6e2f4db"
+  },
+  "email": "saiavu@umich.edu",
+  "root": "/home/saiavu/GreatLakes-TempSensors/sai-2025",
+  "host": "gl1008.arc-ts.umich.edu",
+  "executable": "/home/saiavu/deepsensor_sai/bin/python",
+  "cpu_count": 40,
+  "cpu_count_logical": 40,
+  "gpu": "Tesla V100-PCIE-16GB",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "21464350720",
+      "used": "11896483840"
+    }
+  },
+  "memory": {
+    "total": "200811511808"
+  },
+  "cpu": {
+    "count": 40,
+    "countLogical": 40
+  },
+  "gpu_nvidia": [
+    {
+      "name": "Tesla V100-PCIE-16GB",
+      "memoryTotal": "17179869184",
+      "cudaCores": 5120,
+      "architecture": "Volta"
+    }
+  ],
+  "slurm": {
+    "cluster_name": "greatlakes",
+    "conf": "/var/spool/slurmd.spool/conf-cache/slurm.conf",
+    "cpus_on_node": "1",
+    "cpus_per_task": "1",
+    "export_env": "ALL",
+    "get_user_env": "1",
+    "gpus_on_node": "1",
+    "gpus_per_node": "1",
+    "gtids": "0",
+    "job_account": "dannes0",
+    "job_cpus_per_node": "1",
+    "job_end_time": "1749321845",
+    "job_gid": "114410797",
+    "job_gpus": "0",
+    "job_id": "26698132",
+    "job_name": "ondemand/sys/dashboard/sys/arcts_jupyter_lab",
+    "job_nodelist": "gl1008",
+    "job_num_nodes": "1",
+    "job_partition": "gpu",
+    "job_qos": "normal",
+    "job_start_time": "1749314645",
+    "job_uid": "114410797",
+    "job_user": "saiavu",
+    "jobid": "26698132",
+    "localid": "0",
+    "mem_per_node": "40960",
+    "nnodes": "1",
+    "nodeid": "0",
+    "nodelist": "gl1008",
+    "oom_kill_step": "0",
+    "prio_process": "0",
+    "procid": "0",
+    "script_context": "prolog_task",
+    "spank__slurm_spank_option_lua_gpu_cmode": "exclusive",
+    "submit_dir": "/var/www/ood/apps/sys/dashboard",
+    "submit_host": "gl-ood1.arc-ts.umich.edu",
+    "task_pid": "3129239",
+    "tasks_per_node": "1",
+    "topology_addr": "gl1008",
+    "topology_addr_pattern": "node",
+    "tres_per_task": "cpu=1"
+  },
+  "cudaVersion": "12.6"
+}
