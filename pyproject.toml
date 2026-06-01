@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "greatlakes-tempsensors"
+version = "0.1.0"
+description = "Great Lakes temperature sensor placement with DeepSensor"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["src"]
