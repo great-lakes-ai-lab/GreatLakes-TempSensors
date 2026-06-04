@@ -4,6 +4,7 @@
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
+import xarray as xr
 
 from deepsensor.data import TaskLoader
 from deepsensor_greatlakes.utils import generate_random_coordinates
@@ -12,57 +13,40 @@ from pipeline.config import PipelineConfig
 
 
 def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
-    """
-    Construct a TaskLoader from the processed bundle and config.
+    context = []
+    context_sampling_map = []
+    aux_at_targets_list = []
+    target_ds = None
 
-    Context sets are built dynamically based on what's available in the bundle.
-    Order:
-        1. Target variable (sst or sst_anom) — sampled at random lake points
-        2. Additional temporal contexts (t2m, ssr, ice_concentration, etc.) — "all"
-        3. mask_time_ds (mask + cos_D + sin_D) — "all"
-        4. (Optional) bathy as context — configurable sampling
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
 
-    Target: the target variable (sst_anom by default)
-    Aux at targets: bathymetry
-    """
-    # Determine target dataset
-    if "sst_anom" in bundle:
-        target_ds = bundle["sst_anom"]
-        target_name = "sst_anom"
-    elif "sst" in bundle:
-        target_ds = bundle["sst"]
-        target_name = "sst"
+        if "target" in roles:
+            if source.use_anomalies and f"{name}_anom" in bundle:
+                target_ds = bundle[f"{name}_anom"]
+            else:
+                target_ds = bundle[name]
+            # Target also goes as first context (sampled at random points)
+            context.append(target_ds)
+            context_sampling_map.append(source.sampling)
+
+        if "context" in roles and "target" not in roles:
+            context.append(bundle[name])
+            context_sampling_map.append(source.sampling)
+
+        if "aux_at_targets" in roles:
+            aux_at_targets_list.append(bundle[name])
+
+        if "mask" in roles:
+            # mask_time_ds goes as context
+            context.append(bundle["mask_time_ds"])
+            context_sampling_map.append("all")
+
+    # Merge aux_at_targets into single dataset
+    if aux_at_targets_list:
+        aux_at_targets = xr.merge(aux_at_targets_list)
     else:
-        raise ValueError("No target variable (sst or sst_anom) found in bundle.")
-
-    # Build context list
-    # First context is always the target variable (will be sampled at random points)
-    context = [target_ds]
-
-    # Additional temporal datasets as context (sampled "all")
-    # These are anything temporal that isn't the target and isn't mask_time_ds
-    skip_names = {target_name, "sst", "sst_anom", "mask_time_ds", "bathy", "lakemask",
-                  "lakemask_sampling", "sst_stand", "sst_anom_stand",
-                  "cosD", "sinD", "data_processor", "seasonal_processor"}
-    temporal_context_names = []
-
-    for name, ds in bundle.items():
-        if name in skip_names:
-            continue
-        if hasattr(ds, "dims") and "time" in getattr(ds, "dims", {}):
-            context.append(ds)
-            temporal_context_names.append(name)
-
-    # mask_time_ds (static mask + temporal encoding)
-    if "mask_time_ds" in bundle:
-        context.append(bundle["mask_time_ds"])
-
-    # Optional: bathymetry as context
-    if config.training.include_bathy_as_context and "bathy" in bundle:
-        context.append(bundle["bathy"])
-
-    # Aux at targets
-    aux_at_targets = bundle.get("bathy")
+        aux_at_targets = None
 
     task_loader = TaskLoader(
         context=context,
@@ -70,25 +54,8 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
         aux_at_targets=aux_at_targets,
     )
 
-    # Store context layout info for gen_tasks to reference
-    task_loader._context_layout = {
-        "target_idx": 0,
-        "temporal_context_names": temporal_context_names,
-        "temporal_context_start_idx": 1,
-        "mask_time_idx": 1 + len(temporal_context_names) if "mask_time_ds" in bundle else None,
-        "bathy_idx": len(context) - 1 if config.training.include_bathy_as_context else None,
-        "n_contexts": len(context),
-    }
-
-    print(f"TaskLoader built: {len(context)} context sets, target='{target_name}'")
-    print(f"  Context[0]: {target_name} (random lake points)")
-    for i, name in enumerate(temporal_context_names, start=1):
-        print(f"  Context[{i}]: {name} (all)")
-    if "mask_time_ds" in bundle:
-        print(f"  Context[{1 + len(temporal_context_names)}]: mask_time_ds (all)")
-    if config.training.include_bathy_as_context:
-        print(f"  Context[{len(context) - 1}]: bathy ({config.training.bathy_context_sampling})")
-    print(f"  Aux at targets: bathy")
+    # Store sampling map for gen_tasks
+    task_loader._context_sampling_map = context_sampling_map
 
     return task_loader
 
@@ -137,8 +104,11 @@ def gen_tasks(
     if seed is not None:
         np.random.seed(seed)
 
-    # Build context_sampling list based on layout
-    layout = task_loader._context_layout
+    if not hasattr(task_loader, "_context_sampling_map"):
+        raise AttributeError(
+            "TaskLoader is missing _context_sampling_map. "
+            "Build it using build_task_loader(config, bundle)."
+        )
 
     tasks = []
     skipped = []
@@ -159,21 +129,15 @@ def gen_tasks(
 
         # Build context_sampling: random points for target, "all" for everything else
         context_sampling = []
-        for i in range(layout["n_contexts"]):
-            if i == layout["target_idx"]:
+        for sampling_strategy in task_loader._context_sampling_map:
+            if sampling_strategy == "random_lake_points":
                 context_sampling.append(random_lake_points)
-            elif i == layout["bathy_idx"]:
-                raw_val = tc.bathy_context_sampling
-                if raw_val == "all":
-                    context_sampling.append("all")
-                elif raw_val == "random_lake_points":
-                    context_sampling.append(random_lake_points)
-                elif isinstance(raw_val, int):
-                    context_sampling.append(raw_val)
-                else:
-                    context_sampling.append(int(raw_val))
-            else:
+            elif sampling_strategy == "all":
                 context_sampling.append("all")
+            elif isinstance(sampling_strategy, int):
+                context_sampling.append(sampling_strategy)
+            else:
+                context_sampling.append(int(sampling_strategy))
 
         try:
             task = task_loader(

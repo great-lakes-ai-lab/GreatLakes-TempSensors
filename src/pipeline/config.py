@@ -5,37 +5,47 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 import yaml
-import torch
+import shutil
 
 
 @dataclass
 class PathsConfig:
-    data_cache: str
-    raw_dir: str = ""
+    output_root: str
+
+    # Derived paths
+    run_dir: str = ""
     processed_dir: str = ""
     model_dir: str = ""
+    data_processor_dir: str = ""
+    seasonal_dir: str = ""
 
-    def __post_init__(self):
-        base = Path(self.data_cache)
-        if not self.raw_dir:
-            self.raw_dir = str(base / "raw")
-        if not self.processed_dir:
-            self.processed_dir = str(base / "processed")
-        if not self.model_dir:
-            self.model_dir = str(base / "saved_models")
+    def resolve(self, run_name: str):
+        """Derive all output paths from output_root/run_name."""
+        root = Path(self.output_root).expanduser()
+        run_dir = root / run_name
+
+        self.output_root = str(root)
+        self.run_dir = str(run_dir)
+        self.processed_dir = str(run_dir / "processed_data")
+        self.model_dir = str(run_dir / "model")
+        self.data_processor_dir = str(run_dir / "deepsensor_config" / "data_processor")
+        self.seasonal_dir = str(run_dir / "seasonal_cycles")
 
 
 @dataclass
 class DataSourceEntry:
     path: str
-    format: str  # "netcdf" or "zarr"
-    variable: Optional[str] = None  # optional rename hint
+    format: str
+    variable: Optional[str] = None
+    variables: Optional[list] = None
+    role: str = "context"                   # target, context, aux_at_targets, mask, or list
+    use_anomalies: bool = False
+    sampling: str = "all"                   # all, random_lake_points, or integer
+    coarsen_factor: Optional[int] = None    # per-source coarsening
 
 
 @dataclass
 class PreprocessingConfig:
-    static_coarsen_factor: int = 10
-    mask_coarsen_factor: int = 20
     fit_range: tuple = ("2019-01-01", "2019-12-31")
     force_reprocess: bool = False
 
@@ -78,14 +88,15 @@ def load_config(config_path: str) -> PipelineConfig:
     with open(config_path, "r") as f:
         raw = yaml.safe_load(f)
 
-    # Build PathsConfig (expand ~ to home dir)
-    paths_raw = raw.get("paths", {})
-    for key, val in paths_raw.items():
-        if isinstance(val, str):
-            paths_raw[key] = str(Path(val).expanduser())
-    paths = PathsConfig(**paths_raw)
+    # Run config first, because paths depend on run.name
+    run_cfg = RunConfig(**raw.get("run", {}))
 
-    # Build data_sources — expand ~ in each path
+    # Paths
+    paths_raw = raw.get("paths", {})
+    paths = PathsConfig(**paths_raw)
+    paths.resolve(run_cfg.name)
+
+    # Data sources
     sources_raw = raw.get("data_sources", {})
     data_sources = {}
     for name, entry in sources_raw.items():
@@ -93,11 +104,8 @@ def load_config(config_path: str) -> PipelineConfig:
             entry["path"] = str(Path(entry["path"]).expanduser())
         data_sources[name] = DataSourceEntry(**entry)
 
-
-    # Build other sub-configs
     preprocessing = PreprocessingConfig(**raw.get("preprocessing", {}))
     training = TrainingConfig(**raw.get("training", {}))
-    run_cfg = RunConfig(**raw.get("run", {}))
 
     return PipelineConfig(
         lake=raw.get("lake", "erie"),
@@ -108,3 +116,8 @@ def load_config(config_path: str) -> PipelineConfig:
         training=training,
         run=run_cfg,
     )
+
+def copy_config_to_run_dir(config, config_path):
+    run_dir = Path(config.paths.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(config_path, run_dir / "config_used.yaml")

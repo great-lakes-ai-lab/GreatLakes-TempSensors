@@ -1,3 +1,4 @@
+
 # src/pipeline/preprocessor.py
 """Standardize, compute anomalies, coarsen, fit DataProcessor, build bundle."""
 
@@ -13,7 +14,7 @@ from deepsensor.data import DataProcessor, construct_circ_time_ds
 from deepsensor_greatlakes.utils import standardize_dates, standardize_coords
 from deepsensor_greatlakes.preprocessor import SeasonalCycleProcessor
 
-from pipeline.config import PipelineConfig, DataSourceEntry
+from pipeline.config import PipelineConfig
 
 
 # -----------------------------------------------------------------------
@@ -27,14 +28,13 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
 
     Steps:
         1. Standardize coords and dates
-        2. Handle variable renaming / cleaning
-        3. Compute anomalies
-        4. Coarsen static datasets
-        5. Fit or load DataProcessor
-        6. Process all datasets through DataProcessor
-        7. Build temporal encodings + mask_time_ds
-        8. Save processed outputs
-        9. Return processed bundle dict
+        2. Apply per-source coarsening
+        3. Compute anomalies (if requested)
+        4. Extract lakemask for sampling (pre-DataProcessor)
+        5. Fit DataProcessor (target first) and process all datasets
+        6. Build temporal encodings + mask_time_ds
+        7. Save processed outputs
+        8. Return bundle dict
 
     Parameters
     ----------
@@ -47,7 +47,7 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     dict with keys like 'sst', 'sst_anom', 'bathy', 'lakemask', 'data_processor', etc.
     """
     processed_dir = Path(config.paths.processed_dir)
-    dp_dir = Path(config.paths.data_cache) / "deepsensor_config" / "data_processor"
+    dp_dir = Path(config.paths.data_processor_dir)
 
     # Check cache first
     if not config.preprocessing.force_reprocess and _cache_exists(processed_dir, dp_dir):
@@ -56,51 +56,44 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
 
     print("Running preprocessing pipeline...")
 
-    # 1. Standardize
+    # 1. Standardize coords and dates
     standardized = _standardize_all(raw_datasets, config)
 
-    # 2. Compute lake mask from bathymetry
-    lake_mask_stand = _derive_lake_mask(standardized["bathy"])
+    # 2. Apply per-source coarsening
+    standardized = _coarsen_sources(standardized, config)
 
-    # 3. Compute anomalies (if SST present)
+    # 3. Compute anomalies for any source with use_anomalies=True
     seasonal_processor = None
-    sst_anom_stand = None
-    if "sst" in standardized:
-        seasonal_dir = Path(config.paths.data_cache) / "seasonal_cycles"
-        sst_anom_stand, seasonal_processor = _compute_anomalies(
-            standardized["sst"], seasonal_dir
-        )
+    for name, source in config.data_sources.items():
+        if source.use_anomalies and name in standardized:
+            seasonal_dir = Path(config.paths.seasonal_dir)
+            anom_ds, seasonal_processor = _compute_anomalies(
+                standardized[name], seasonal_dir
+            )
+            # Store anomalies alongside original
+            anom_key = f"{name}_anom"
+            standardized[anom_key] = anom_ds
 
-    # 4. Coarsen static datasets
-    bathy_coarse, lake_mask_coarse = _coarsen_statics(
-        standardized["bathy"],
-        lake_mask_stand,
-        bathy_factor=config.preprocessing.static_coarsen_factor,
-        mask_factor=config.preprocessing.mask_coarsen_factor,
-    )
+    # 4. Extract lakemask for sampling (pre-DataProcessor, lat/lon coords)
+    lakemask_sampling = _get_lakemask_sampling(standardized, config)
 
-    # Keep coarse mask for sampling (pre-DataProcessor, lat/lon coords)
-    lakemask_sampling = lake_mask_coarse.copy()
+    # 5. Keep pre-DataProcessor versions for model.predict(X_t=...)
+    pre_dp_datasets = {}
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "target" in roles:
+            pre_dp_datasets[f"{name}_stand"] = standardized[name].copy()
+            anom_key = f"{name}_anom"
+            if anom_key in standardized:
+                pre_dp_datasets[f"{anom_key}_stand"] = standardized[anom_key].copy()
 
-    # 5. Fit DataProcessor
-    data_processor, processed_datasets = _fit_and_process(
-        config=config,
-        standardized=standardized,
-        sst_anom_stand=sst_anom_stand,
-        bathy_coarse=bathy_coarse,
-        lake_mask_coarse=lake_mask_coarse,
-    )
+    # 6. Fit DataProcessor and process all datasets
+    data_processor, processed = _fit_and_process(config, standardized)
 
-    # 6. Build temporal features
-    sst_ds = processed_datasets.get("sst") or processed_datasets.get("sst_anom")
-    cosD, sinD = _make_time_features(sst_ds)
-
-    # 7. Build mask + time context dataset
-    mask_time_ds = xr.Dataset({
-        "mask": processed_datasets["lakemask"]["mask"],
-        "cos_D": cosD,
-        "sin_D": sinD,
-    })
+    # 7. Build temporal features and mask_time_ds
+    reference_ds = _get_reference_temporal_ds(processed, config)
+    cosD, sinD = _make_time_features(reference_ds)
+    mask_time_ds = _make_mask_time_ds(processed, config, cosD, sinD)
 
     # 8. Assemble output bundle
     bundle = {
@@ -113,11 +106,10 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     }
 
     # Add all processed datasets
-    bundle.update(processed_datasets)
+    bundle.update(processed)
 
-    # Keep pre-DataProcessor versions for model.predict(X_t=...)
-    bundle["sst_stand"] = standardized.get("sst")
-    bundle["sst_anom_stand"] = sst_anom_stand
+    # Add pre-DataProcessor datasets
+    bundle.update(pre_dp_datasets)
 
     # 9. Save
     _save_cache(config, bundle)
@@ -126,14 +118,14 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
 
 
 # -----------------------------------------------------------------------
-# Internal helpers
+# Standardization
 # -----------------------------------------------------------------------
 
 def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
     """Standardize coords and dates for all raw datasets."""
     standardized = {}
 
-    # Variable rename map (from config hints)
+    # Variable rename map (common raw names -> clean names)
     rename_map = {
         "z": "bathymetry",
         "Band1": "bathymetry",
@@ -141,7 +133,7 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
 
     for name, ds in raw_datasets.items():
         source_entry = config.data_sources[name]
-
+        print(f'standardizing {name}')
         # Rename time if needed (e.g., "date" -> "time")
         if "date" in ds.dims or "date" in ds.coords:
             ds = ds.rename({"date": "time"})
@@ -154,7 +146,7 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
         if "crs" in ds.data_vars:
             ds = ds.drop_vars("crs")
 
-        # Rename variables based on hints
+        # Rename variables based on hint
         if source_entry.variable and source_entry.variable in ds.data_vars:
             target_name = rename_map.get(source_entry.variable, source_entry.variable)
             if target_name != source_entry.variable:
@@ -167,7 +159,7 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
         if "time" in ds.coords:
             ds = standardize_dates(ds)
 
-        # Replace sentinel values
+        # Replace common sentinel values with NaN
         ds = ds.where(ds != -1, np.nan)
         ds = ds.where(ds != -99999, np.nan)
 
@@ -176,18 +168,68 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
     return standardized
 
 
-def _derive_lake_mask(bathy_stand: xr.Dataset) -> xr.Dataset:
-    """Derive binary lake mask from bathymetry (water where depth <= 0)."""
-    bathy_var = list(bathy_stand.data_vars)[0]
-    mask = xr.where(bathy_stand[bathy_var] <= 0, 1, 0)
-    return mask.to_dataset(name="mask")
+# -----------------------------------------------------------------------
+# Coarsening
+# -----------------------------------------------------------------------
 
+def _coarsen_sources(raw_datasets: dict, config: PipelineConfig) -> dict:
+    """
+    Apply per-source coarsening based on coarsen_factor in config.
+
+    Only coarsens sources that have a coarsen_factor set.
+    Returns the dict with coarsened versions replacing originals.
+    """
+    coarsened = {}
+
+    for name, ds in raw_datasets.items():
+        source = config.data_sources.get(name)
+
+        # Skip derived datasets (like sst_anom) that aren't in data_sources
+        if source is None:
+            coarsened[name] = ds
+            continue
+
+        if source.coarsen_factor and source.coarsen_factor > 1:
+            factor = source.coarsen_factor
+
+            if "lat" in ds.dims and "lon" in ds.dims:
+                ds_coarse = (
+                    ds
+                    .coarsen(lat=factor, lon=factor, boundary="trim")
+                    .mean()
+                    .compute()
+                )
+
+                # For mask: threshold back to binary
+                roles = source.role if isinstance(source.role, list) else [source.role]
+                if "mask" in roles:
+                    for var in ds_coarse.data_vars:
+                        ds_coarse[var] = xr.where(ds_coarse[var] >= 0.5, 1, 0)
+                else:
+                    # Fill NaN for non-mask static fields (land = 0)
+                    ds_coarse = ds_coarse.fillna(0)
+
+                print(f"  Coarsened {name}: factor={factor}, "
+                      f"shape {dict(ds.sizes)} -> {dict(ds_coarse.sizes)}")
+                coarsened[name] = ds_coarse
+            else:
+                print(f"  Warning: {name} has no lat/lon dims, skipping coarsen")
+                coarsened[name] = ds
+        else:
+            coarsened[name] = ds
+
+    return coarsened
+
+
+# -----------------------------------------------------------------------
+# Anomaly computation
+# -----------------------------------------------------------------------
 
 def _compute_anomalies(
     sst_stand: xr.Dataset,
     seasonal_dir: Optional[Path] = None,
 ) -> tuple:
-    """Compute SST anomalies by removing monthly climatology."""
+    """Compute anomalies by removing monthly climatology."""
     seasonal_processor = SeasonalCycleProcessor()
     seasonal_processor.calculate(sst_stand)
 
@@ -198,55 +240,44 @@ def _compute_anomalies(
 
     sst_anom = seasonal_processor.compute_anomalies(sst_stand)
 
-    # Rename variable for clarity
-    if "sst" in sst_anom.data_vars:
-        sst_anom = sst_anom.rename({"sst": "sst_anom"})
+    # Rename variable for clarity (e.g., "sst" -> "sst_anom")
+    for var in list(sst_anom.data_vars):
+        if not var.endswith("_anom"):
+            sst_anom = sst_anom.rename({var: f"{var}_anom"})
 
     return sst_anom, seasonal_processor
 
 
-def _coarsen_statics(
-    bathy_stand: xr.Dataset,
-    lake_mask_stand: xr.Dataset,
-    bathy_factor: int = 10,
-    mask_factor: int = 20,
-) -> tuple:
-    """Coarsen bathymetry and lake mask at different resolutions."""
-    bathy_coarse = (
-        bathy_stand
-        .coarsen(lat=bathy_factor, lon=bathy_factor, boundary="trim")
-        .mean()
-        .compute()
-    )
-    bathy_coarse = bathy_coarse.fillna(0)
+# -----------------------------------------------------------------------
+# Lakemask extraction
+# -----------------------------------------------------------------------
 
-    # Mask: fraction -> binary threshold
-    lake_mask_frac = (
-        lake_mask_stand
-        .coarsen(lat=mask_factor, lon=mask_factor, boundary="trim")
-        .mean()
-        .compute()
-    )
-    lake_mask_binary = xr.where(lake_mask_frac >= 0.5, 1, 0)
-
-    if isinstance(lake_mask_binary, xr.DataArray):
-        lake_mask_binary = lake_mask_binary.to_dataset(name="mask")
-
-    return bathy_coarse, lake_mask_binary
-
-
-def _fit_and_process(
-    config: PipelineConfig,
-    standardized: dict,
-    sst_anom_stand: Optional[xr.Dataset],
-    bathy_coarse: xr.Dataset,
-    lake_mask_coarse: xr.Dataset,
-) -> tuple:
+def _get_lakemask_sampling(standardized: dict, config: PipelineConfig) -> xr.Dataset:
     """
-    Fit DataProcessor on fit_range, then process all datasets.
+    Get the lakemask dataset for coordinate sampling.
+    This is pre-DataProcessor (lat/lon coords, binary 0/1).
+    """
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "mask" in roles and name in standardized:
+            return standardized[name].copy()
 
-    IMPORTANT: The target variable (sst) is processed first, since it
-    defines the normalized spatial coordinate bounds for all subsequent datasets.
+    raise ValueError("No data source with role='mask' found in config.")
+
+
+# -----------------------------------------------------------------------
+# DataProcessor fitting
+# -----------------------------------------------------------------------
+
+def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
+    """
+    Fit DataProcessor and process all datasets, ordered by role.
+
+    Order:
+        1. Target first (defines spatial normalization bounds)
+        2. Target anomalies (if present)
+        3. Temporal context datasets
+        4. Static datasets (min_max)
 
     Returns (data_processor, processed_datasets_dict).
     """
@@ -254,38 +285,77 @@ def _fit_and_process(
     fit_start, fit_end = config.preprocessing.fit_range
     processed = {}
 
-    # --- 1. Target variable FIRST (defines spatial normalization) ---
-    target_name = "sst"  # Could make this configurable later
-    if target_name in standardized and "time" in standardized[target_name].dims:
-        ds = standardized[target_name]
-        _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
-        processed[target_name] = data_processor(ds)
+    # --- 1. Target first (defines spatial bounds) ---
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "target" not in roles:
+            continue
 
-    # --- 2. SST anomalies (derived from target, same spatial grid) ---
-    if sst_anom_stand is not None:
-        _ = data_processor(sst_anom_stand.sel(time=slice(fit_start, fit_end)))
-        processed["sst_anom"] = data_processor(sst_anom_stand)
-
-    # --- 3. Remaining temporal datasets ---
-    temporal_names = [
-        name for name, ds in standardized.items()
-        if "time" in ds.dims and name != target_name
-    ]
-
-    for name in temporal_names:
         ds = standardized[name]
-        _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
-        processed[name] = data_processor(ds)
+        if "time" in ds.dims:
+            _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
+            processed[name] = data_processor(ds)
 
-    # --- 4. Static datasets last (min_max) ---
-    bathy, lakemask = data_processor(
-        [bathy_coarse, lake_mask_coarse],
-        method="min_max",
-    )
-    processed["bathy"] = bathy
-    processed["lakemask"] = lakemask
+            # --- 2. Anomalies (if computed) ---
+            anom_key = f"{name}_anom"
+            if source.use_anomalies and anom_key in standardized:
+                _ = data_processor(
+                    standardized[anom_key].sel(time=slice(fit_start, fit_end))
+                )
+                processed[anom_key] = data_processor(standardized[anom_key])
+
+    # --- 3. Temporal context datasets ---
+    for name, source in config.data_sources.items():
+        if name in processed:
+            continue
+
+        roles = source.role if isinstance(source.role, list) else [source.role]
+
+        # Skip mask and pure aux_at_targets (they're static)
+        if "context" not in roles and "target" not in roles:
+            continue
+
+        ds = standardized[name]
+        if "time" in ds.dims:
+            _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
+            processed[name] = data_processor(ds)
+
+    # --- 4. Static datasets (min_max) ---
+    for name, source in config.data_sources.items():
+        if name in processed:
+            continue
+
+        ds = standardized[name]
+        if "time" not in ds.dims:
+            _ = data_processor(ds, method="min_max")
+            processed[name] = data_processor(ds, method="min_max")
 
     return data_processor, processed
+
+
+# -----------------------------------------------------------------------
+# Temporal features
+# -----------------------------------------------------------------------
+
+def _get_reference_temporal_ds(processed: dict, config: PipelineConfig) -> xr.Dataset:
+    """Get a reference temporal dataset (target) for building time features."""
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "target" in roles:
+            # Prefer anomaly version if it exists
+            anom_key = f"{name}_anom"
+            if source.use_anomalies and anom_key in processed:
+                return processed[anom_key]
+            if name in processed:
+                return processed[name]
+
+    # Fallback: first temporal dataset
+    for name, ds in processed.items():
+        if hasattr(ds, "dims") and "time" in ds.dims:
+            return ds
+
+    raise ValueError("No temporal dataset found for building time features.")
+
 
 def _make_time_features(reference_ds: xr.Dataset) -> tuple:
     """Build circular day-of-year features matching a reference dataset's time range."""
@@ -300,36 +370,90 @@ def _make_time_features(reference_ds: xr.Dataset) -> tuple:
     return cosD, sinD
 
 
+def _make_mask_time_ds(
+    processed: dict,
+    config: PipelineConfig,
+    cosD: xr.DataArray,
+    sinD: xr.DataArray,
+) -> xr.Dataset:
+    """Build the mask + temporal encoding context dataset."""
+    # Find the processed mask dataset
+    mask_ds = None
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "mask" in roles and name in processed:
+            mask_ds = processed[name]
+            break
+
+    if mask_ds is None:
+        raise ValueError("No processed mask dataset found for mask_time_ds.")
+
+    # Get the mask variable (first data_var in the mask dataset)
+    mask_var = list(mask_ds.data_vars)[0]
+
+    mask_time_ds = xr.Dataset({
+        "mask": mask_ds[mask_var],
+        "cos_D": cosD,
+        "sin_D": sinD,
+    })
+
+    return mask_time_ds
+
+
 # -----------------------------------------------------------------------
 # Cache save / load
 # -----------------------------------------------------------------------
 
 def _cache_exists(processed_dir: Path, dp_dir: Path) -> bool:
     """Check if processed cache has minimum required files."""
-    required = [
-        processed_dir / "sst.nc",
-        processed_dir / "lakemask.nc",
-        processed_dir / "bathy.nc",
-        processed_dir / "mask_time_ds.nc",
-        processed_dir / "lakemask_sampling.nc",
-        dp_dir,
-    ]
-    return all(p.exists() for p in required)
+    if not processed_dir.exists():
+        return False
+    if not dp_dir.exists():
+        return False
+
+    meta_path = processed_dir / "metadata.json"
+    return meta_path.exists()
 
 
 def _clean_encoding(ds: xr.Dataset) -> xr.Dataset:
-    """Remove conflicting encoding attrs before saving."""
+    """Remove conflicting encoding attrs and problematic coordinates before saving."""
+    ds = ds.copy()
+
+    # Compute any lazy arrays (dask -> numpy)
+    ds = ds.compute()
+
+    # Drop problematic coordinates that aren't needed
+    coords_to_drop = []
+    for coord in ds.coords:
+        if coord in ds.dims:
+            continue  # keep dimension coordinates
+        if ds[coord].dtype == object:
+            coords_to_drop.append(coord)
+
+    if coords_to_drop:
+        ds = ds.drop_vars(coords_to_drop)
+
+    # Clean encoding attrs on data variables
     for var in ds.data_vars:
         for attr in ["_FillValue", "missing_value"]:
             ds[var].attrs.pop(attr, None)
             ds[var].encoding.pop(attr, None)
+
+    # Clean encoding on coordinate variables too
+    for coord in ds.coords:
+        for attr in ["_FillValue", "missing_value"]:
+            if hasattr(ds[coord], "attrs"):
+                ds[coord].attrs.pop(attr, None)
+            if hasattr(ds[coord], "encoding"):
+                ds[coord].encoding.pop(attr, None)
+
     return ds
 
 
 def _save_cache(config: PipelineConfig, bundle: dict):
     """Save processed datasets and DataProcessor to disk."""
     processed_dir = Path(config.paths.processed_dir)
-    dp_dir = Path(config.paths.data_cache) / "deepsensor_config" / "data_processor"
+    dp_dir = Path(config.paths.data_processor_dir)
     processed_dir.mkdir(parents=True, exist_ok=True)
     dp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -339,12 +463,15 @@ def _save_cache(config: PipelineConfig, bundle: dict):
     # Save any xr.Dataset or xr.DataArray in the bundle
     saved_datasets = []
     for name, obj in bundle.items():
-        if isinstance(obj, xr.DataArray):
-            _clean_encoding(obj.to_dataset()).to_netcdf(processed_dir / f"{name}.nc")
-            saved_datasets.append(name)
-        elif isinstance(obj, xr.Dataset):
-            _clean_encoding(obj).to_netcdf(processed_dir / f"{name}.nc")
-            saved_datasets.append(name)
+        try:
+            if isinstance(obj, xr.DataArray):
+                _clean_encoding(obj.to_dataset()).to_netcdf(processed_dir / f"{name}.nc")
+                saved_datasets.append(name)
+            elif isinstance(obj, xr.Dataset):
+                _clean_encoding(obj).to_netcdf(processed_dir / f"{name}.nc")
+                saved_datasets.append(name)
+        except Exception as e:
+            print(f"Error saving {name}: {e}")
 
     # Metadata
     metadata = {
@@ -357,12 +484,14 @@ def _save_cache(config: PipelineConfig, bundle: dict):
     with open(processed_dir / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=4)
 
+    print(f"Processed cache saved to: {processed_dir}")
+
 
 def load_processed_cache(config: PipelineConfig) -> dict:
     """Load previously saved processed bundle from disk."""
     processed_dir = Path(config.paths.processed_dir)
-    dp_dir = Path(config.paths.data_cache) / "deepsensor_config" / "data_processor"
-    seasonal_dir = Path(config.paths.data_cache) / "seasonal_cycles"
+    dp_dir = Path(config.paths.data_processor_dir)
+    seasonal_dir = Path(config.paths.seasonal_dir)
 
     data_processor = DataProcessor(str(dp_dir))
     bundle = {"data_processor": data_processor}

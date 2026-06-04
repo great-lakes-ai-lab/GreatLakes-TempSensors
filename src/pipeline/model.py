@@ -1,5 +1,7 @@
 # src/pipeline/model.py
 """ConvNP model initialization, saving, and loading."""
+from pathlib import Path
+import shutil
 
 import torch
 import deepsensor.torch
@@ -63,17 +65,15 @@ def build_model(config: PipelineConfig, bundle: dict, task_loader) -> ConvNP:
 
 def save_trained_model(model: ConvNP, config: PipelineConfig):
     """Save model weights and config to the run's model directory."""
-    from pathlib import Path
-    import shutil
-
-    model_dir = Path(config.paths.model_dir) / config.run.name
+    model_dir = Path(config.paths.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
 
     save_model(model, str(model_dir))
 
     # Copy DataProcessor config alongside model for reproducibility
-    dp_source = Path(config.paths.data_cache) / "deepsensor_config" / "data_processor"
+    dp_source = Path(config.paths.data_processor_dir)
     dp_dest = model_dir / "data_processor"
+
     if dp_source.exists():
         if dp_dest.exists():
             shutil.rmtree(dp_dest)
@@ -83,23 +83,7 @@ def save_trained_model(model: ConvNP, config: PipelineConfig):
 
 
 def load_trained_model(config: PipelineConfig, bundle: dict, task_loader) -> ConvNP:
-    """
-    Load a previously trained model from disk.
-
-    Parameters
-    ----------
-    config : PipelineConfig
-    bundle : dict
-        Must contain 'data_processor'
-    task_loader : TaskLoader
-
-    Returns
-    -------
-    ConvNP model with loaded weights
-    """
-    from pathlib import Path
-
-    model_dir = Path(config.paths.model_dir) / config.run.name
+    model_dir = Path(config.paths.model_dir)
 
     model = load_convnp_model(
         str(model_dir),

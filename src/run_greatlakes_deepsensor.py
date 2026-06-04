@@ -4,9 +4,9 @@
 import argparse
 from pathlib import Path
 
-from pipeline.config import load_config, PipelineConfig
+from pipeline.config import load_config, PipelineConfig, copy_config_to_run_dir
 from pipeline.data_loader import load_raw_datasets
-from pipeline.preprocessor import preprocess_all
+from pipeline.preprocessor import load_processed_cache, _cache_exists, preprocess_all
 from pipeline.task_builder import build_task_loader, gen_tasks, make_train_val_dates
 from pipeline.model import setup_device, build_model, load_trained_model
 from pipeline.trainer import train_model
@@ -29,6 +29,7 @@ def main():
 
     # 1. Load config
     config = load_config(args.config)
+    copy_config_to_run_dir(config, args.config)
     print(f"Config loaded: lake={config.lake}, env={config.environment}, run={config.run.name}")
 
     # 2. Setup device
@@ -62,12 +63,8 @@ def main():
 
 def run_preprocessing(config: PipelineConfig) -> dict:
     """Load from cache if available, otherwise load raw and preprocess."""
-    from pathlib import Path
-    from pipeline.preprocessor import load_processed_cache, _cache_exists, preprocess_all
-    from pipeline.data_loader import load_raw_datasets
-
     processed_dir = Path(config.paths.processed_dir)
-    dp_dir = Path(config.paths.data_cache) / "deepsensor_config" / "data_processor"
+    dp_dir = Path(config.paths.data_processor_dir)
 
     if not config.preprocessing.force_reprocess and _cache_exists(processed_dir, dp_dir):
         print("Loading from processed cache (skipping raw data load)...")
@@ -83,7 +80,7 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/local_erie.yaml",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
         "--stage", "all",
     ]
     main()

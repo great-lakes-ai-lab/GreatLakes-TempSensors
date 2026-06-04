@@ -2,25 +2,25 @@ lake: erie
 environment: local
 
 paths:
-  data_cache: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache
-  raw_dir: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/raw
-  processed_dir: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/processed
-  model_dir: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/saved_models
+  data_cache: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache
+  raw_dir: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/raw
+  processed_dir: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/processed
+  model_dir: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/saved_models
 
 data_sources:
   sst:
-    path: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/raw/glsea_sst_lake_erie_2019_2021.nc
+    path: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/raw/glsea_sst_lake_erie_2019_2021.nc
     format: netcdf
     variable: sst
   bathy:
-    path: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/raw/erie_lld.grd
+    path: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/raw/erie_lld.grd
     format: netcdf
     variable: z
   t2m:
-    path: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/raw/lake_erie_t2m_daily_mean_2019_2021.nc
+    path: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/raw/lake_erie_t2m_daily_mean_2019_2021.nc
     format: netcdf
   ssr:
-    path: ~/dev/deepsensor_projects/refactor_test/lake_erie/data_cache/raw/lake_erie_ssr_daily_sum_2019_2021.nc
+    path: ~/dev/deepsensor_projects/refactor_test/depracated_erie_pipeline/data_cache/raw/lake_erie_ssr_daily_sum_2019_2021.nc
     format: netcdf
   # ice_concentration:
   #   path: ...

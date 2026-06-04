@@ -77,6 +77,8 @@ def train_model(
         # Free memory
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        if torch.mps.is_available():
+            torch.mps.empty_cache()
 
     elapsed = time.time() - start_time
     elapsed_min = elapsed / 60.0
@@ -142,7 +144,7 @@ def compute_val_rmse(model, val_tasks: list, bundle: dict, task_loader) -> float
 
 def _save_training_metadata(config: PipelineConfig, results: dict):
     """Save training run metadata to JSON."""
-    model_dir = Path(config.paths.model_dir) / config.run.name
+    model_dir = Path(config.paths.model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
 
     tc = config.training
@@ -183,7 +185,7 @@ def _save_training_plots(config: PipelineConfig, results: dict):
     """Save training curves plot."""
     import matplotlib.pyplot as plt
 
-    model_dir = Path(config.paths.model_dir) / config.run.name
+    model_dir = Path(config.paths.model_dir)
     plots_dir = model_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
