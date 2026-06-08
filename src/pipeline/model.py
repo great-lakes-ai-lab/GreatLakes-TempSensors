@@ -91,5 +91,8 @@ def load_trained_model(config: PipelineConfig, bundle: dict, task_loader) -> Con
         task_loader,
     )
 
-    print(f"Model loaded from: {model_dir}")
+    device = detect_device()
+    model.model.to(device)
+
+    print(f"Model loaded from: {model_dir} (on {device})")
     return model

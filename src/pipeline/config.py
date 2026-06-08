@@ -73,6 +73,37 @@ class RunConfig:
 
 
 @dataclass
+class PredictionConfig:
+    dates: list = None              # Specific dates: ["2021-03-15", "2021-07-01"]
+    n_random: int = None            # OR: pick n random dates from val range
+    every_n_days: int = None        # OR: every n days across val range
+    n_context: int = None           # Override training n_context for prediction (optional)
+    seed: int = 42
+
+    def get_dates(self, val_range: tuple) -> list:
+        """Resolve prediction dates from config options."""
+        import pandas as pd
+        import numpy as np
+
+        if self.dates:
+            return pd.to_datetime(self.dates).normalize().tolist()
+
+        val_start, val_end = val_range
+        all_dates = pd.date_range(val_start, val_end, freq="D").normalize()
+
+        if self.n_random:
+            np.random.seed(self.seed)
+            idx = np.random.choice(len(all_dates), size=min(self.n_random, len(all_dates)), replace=False)
+            return sorted(all_dates[idx].tolist())
+
+        if self.every_n_days:
+            return all_dates[::self.every_n_days].tolist()
+
+        # Default: 5 evenly spaced dates
+        return pd.date_range(val_start, val_end, periods=5).normalize().tolist()
+
+
+@dataclass
 class PipelineConfig:
     lake: str = "erie"
     environment: str = "local"  # "local" or "hpc"
@@ -80,7 +111,9 @@ class PipelineConfig:
     data_sources: dict = field(default_factory=dict)  # str -> DataSourceEntry
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    prediction: PredictionConfig = field(default_factory=PredictionConfig)
     run: RunConfig = field(default_factory=RunConfig)
+
 
 
 def load_config(config_path: str) -> PipelineConfig:
@@ -106,6 +139,7 @@ def load_config(config_path: str) -> PipelineConfig:
 
     preprocessing = PreprocessingConfig(**raw.get("preprocessing", {}))
     training = TrainingConfig(**raw.get("training", {}))
+    prediction = PredictionConfig(**raw.get("prediction", {}))
 
     return PipelineConfig(
         lake=raw.get("lake", "erie"),
@@ -114,6 +148,7 @@ def load_config(config_path: str) -> PipelineConfig:
         data_sources=data_sources,
         preprocessing=preprocessing,
         training=training,
+        prediction=prediction,
         run=run_cfg,
     )
 

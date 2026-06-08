@@ -1,8 +1,8 @@
 run:
-  name: run01_mich_fast_refactor_test
-  notes: "testing lake mich flow debugging"
+  name: run06_erie_baseline
+  notes: "This run will up the internal density and the context points to see if it can do better than the lower N"
 
-lake: michigan
+lake: erie
 environment: local
 
 paths:
@@ -41,31 +41,47 @@ data_sources:
       variable: mask
       role: mask
       coarsen_factor: 25
-#  dist_to_land:
-#    path: ~/dev/deepsensor_projects/data/bathy/gl_dist_to_land_3arcsec.nc
-#    format: netcdf
-#    variable: dist_to_land
-#    role: aux_at_targets
-#    coarsen_factor: 10
-#  core_depth:
-#    path: ~/dev/deepsensor_projects/data/bathy/gl_core_depth_3arcsec.nc
-#    format: netcdf
-#    variable: core_depth
-#    role: aux_at_targets
-#    coarsen_factor: 10
+  dist_to_land:
+    path: ~/dev/deepsensor_projects/data/bathy/gl_dist_to_land_3arcsec.nc
+    format: netcdf
+    variable: dist_to_land
+    role: aux_at_targets
+    coarsen_factor: 10
+  core_depth:
+    path: ~/dev/deepsensor_projects/data/bathy/gl_core_depth_3arcsec.nc
+    format: netcdf
+    variable: core_depth
+    role: aux_at_targets
+    coarsen_factor: 10
 
 preprocessing:
   fit_range: ["2018-01-01", "2018-12-31"]
   force_reprocess: true
 
 training:
-  train_range: ["2019-01-01", "2020-12-31"]
-  val_range: ["2021-01-01", "2021-12-31"]
-  date_subsample_factor: 20
-  n_epochs: 5
+  train_range: ["2018-01-01", "2020-12-31"]
+  val_range: ["2021-01-01", "2022-12-31"]
+  date_subsample_factor: 4
+  n_epochs: 60
   lr: 5.0e-5
-  internal_density: 50
+  internal_density: 500
   n_context_points: 50
   vary_n_context: true
-  min_n_context: 5
-  max_n_context: 50
+  min_n_context: 10
+  max_n_context: 200
+
+
+prediction:
+  # Option 1: Specific dates
+  dates: ["2021-03-15", "2021-06-01", "2021-07-15", "2021-10-01"]
+
+  # Option 2: Random sample from val range
+#  n_random: 10
+#  seed: 42
+#
+#   Option 3: Every n days across val range
+#  every_n_days: 30
+
+  # Option 4: Override context points for prediction
+#  every_n_days: 30
+#  n_context: 50

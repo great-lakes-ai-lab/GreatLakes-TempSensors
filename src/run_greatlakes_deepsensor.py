@@ -22,14 +22,22 @@ def main():
     )
     parser.add_argument(
         "--stage", type=str, default="all",
-        choices=["preprocess", "train", "all"],
+        choices=["preprocess", "train", "diagnostics", "predict", "all"],
         help="Which stage to run (default: all)",
     )
+
     args = parser.parse_args()
 
     # 1. Load config
     config = load_config(args.config)
-    copy_config_to_run_dir(config, args.config)
+
+    # Stages that just read existing outputs — no reprocessing, no config copy
+    read_only_stages = ["diagnostics", "predict"]
+    if args.stage in read_only_stages:
+        config.preprocessing.force_reprocess = False
+    else:
+        copy_config_to_run_dir(config, args.config)
+
     print(f"Config loaded: lake={config.lake}, env={config.environment}, run={config.run.name}")
 
     # 2. Setup device
@@ -43,8 +51,18 @@ def main():
         print("Done (preprocess only).")
         return
 
+    if args.stage == "diagnostics":
+        from pipeline.diagnostics import run_diagnostics
+        run_diagnostics(config, bundle)
+        return
+
     # 4. Build TaskLoader
     task_loader = build_task_loader(config, bundle)
+
+    if args.stage == "predict":
+        from pipeline.predict import run_predictions
+        run_predictions(config, bundle, task_loader)
+        return
 
     # 5. Generate tasks
     train_dates, val_dates = make_train_val_dates(config)
@@ -76,11 +94,12 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 
 
 if __name__ == "__main__":
-    import sys
 
-    sys.argv = [
-        "run_greatlakes_deepsensor.py",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
-        "--stage", "all",
-    ]
+    # import sys
+    #
+    # sys.argv = [
+    #     "run_greatlakes_deepsensor.py",
+    #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run05_erie_baseline/config_used.yaml",
+    #     "--stage", "predict",
+    # ]
     main()
