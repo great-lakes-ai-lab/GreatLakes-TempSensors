@@ -22,61 +22,73 @@ def main():
     )
     parser.add_argument(
         "--stage", type=str, default="all",
-        choices=["preprocess", "train", "diagnostics", "predict", "all"],
-        help="Which stage to run (default: all)",
+        help="Which stages to run. Comma-separated or 'all'. "
+             "Options: preprocess, train, predict, diagnostics",
     )
 
     args = parser.parse_args()
 
-    # 1. Load config
+    # 1. Load and validate config
     config = load_config(args.config)
+    config.validate()
 
-    # Stages that just read existing outputs — no reprocessing, no config copy
-    read_only_stages = ["diagnostics", "predict"]
-    if args.stage in read_only_stages:
+    # 2. Parse stages
+    if args.stage == "all":
+        stages = ["preprocess", "train", "predict"]
+    else:
+        stages = [s.strip() for s in args.stage.split(",")]
+
+    # Only copy config to run dir if we're modifying outputs
+    read_only_stages = {"diagnostics", "predict"}
+    if all(s in read_only_stages for s in stages):
         config.preprocessing.force_reprocess = False
     else:
         copy_config_to_run_dir(config, args.config)
 
     print(f"Config loaded: lake={config.lake}, env={config.environment}, run={config.run.name}")
+    print(f"Stages to run: {stages}")
 
-    # 2. Setup device
+    # 3. Setup device
     device = setup_device()
 
-    # 3. Preprocess (loads from cache if available, skips raw load)
+    # 4. Preprocess (loads from cache if available)
     bundle = run_preprocessing(config)
     print("Preprocessing complete.")
 
-    if args.stage == "preprocess":
+    if stages == ["preprocess"]:
         print("Done (preprocess only).")
         return
 
-    if args.stage == "diagnostics":
+    # 5. Diagnostics (optional, can run standalone or alongside others)
+    if "diagnostics" in stages:
         from pipeline.diagnostics import run_diagnostics
         run_diagnostics(config, bundle)
-        return
+        if stages == ["diagnostics"]:
+            return
 
-    # 4. Build TaskLoader
-    task_loader = build_task_loader(config, bundle)
+    # 6. Build TaskLoader (needed for train and predict)
+    tl_config = build_task_loader(config, bundle)
 
-    if args.stage == "predict":
+    # 7. Train
+    if "train" in stages:
+        train_dates, val_dates = make_train_val_dates(config)
+        print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
+
+        train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=42)
+        val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=123)
+
+        model = build_model(config, bundle, tl_config.task_loader)
+        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config)
+
+        print(f"\nBest RMSE: {results['best_val_rmse']:.4f} at epoch {results['best_epoch']}")
+
+    # 8. Predict
+    if "predict" in stages:
         from pipeline.predict import run_predictions
-        run_predictions(config, bundle, task_loader)
-        return
-
-    # 5. Generate tasks
-    train_dates, val_dates = make_train_val_dates(config)
-    print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
-
-    train_tasks = gen_tasks(task_loader, train_dates, bundle, config, seed=42)
-    val_tasks = gen_tasks(task_loader, val_dates, bundle, config, seed=123)
-
-    # 6. Build model and train
-    model = build_model(config, bundle, task_loader)
-    results = train_model(model, task_loader, train_tasks, val_tasks, bundle, config)
+        run_predictions(config, bundle, tl_config)
+        
 
     print(f"\nRun '{config.run.name}' complete.")
-    print(f"Best RMSE: {results['best_val_rmse']:.4f} at epoch {results['best_epoch']}")
 
 
 def run_preprocessing(config: PipelineConfig) -> dict:
@@ -95,11 +107,12 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 
 if __name__ == "__main__":
 
-    # import sys
-    #
-    # sys.argv = [
-    #     "run_greatlakes_deepsensor.py",
-    #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run05_erie_baseline/config_used.yaml",
-    #     "--stage", "predict",
-    # ]
+    import sys
+
+    sys.argv = [
+        "run_greatlakes_deepsensor.py",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run05_erie_baseline/config_used.yaml",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
+        "--stage", "all"
+    ]
     main()

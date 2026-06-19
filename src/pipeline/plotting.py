@@ -9,21 +9,111 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
 
-def plot_task(task, task_loader, title=""):
+import os
+import matplotlib
+
+
+def _should_show_plots(config) -> bool:
+    """Determine whether to call plt.show() or just save and close."""
+    mode = config.run.display_plots
+
+    if mode == "show":
+        return True
+    elif mode == "save_only":
+        return False
+    else:
+        # Auto-detect: show if display is available
+        # HPC batch jobs, SSH without X-forwarding, etc. won't have DISPLAY
+        if os.environ.get("SLURM_JOB_ID"):
+            return False
+        if os.environ.get("PBS_JOBID"):
+            return False
+        if not os.environ.get("DISPLAY") and os.name != "nt":
+            # No DISPLAY on Linux/Mac (but Windows doesn't use DISPLAY)
+            # Also check if we're on macOS (always has a display framework)
+            import sys
+            if sys.platform == "darwin":
+                return True
+            return False
+        return True
+
+
+def _finish_plot(config, save_path=None):
+    """Save and/or show a plot based on config."""
+    import matplotlib.pyplot as plt
+
+    if save_path:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+
+    if _should_show_plots(config):
+        plt.show()
+    else:
+        plt.close()
+
+
+def _get_actual_ds(bundle: dict, config) -> tuple:
+    """
+    Get the pre-DataProcessor actual target dataset and its variable name.
+
+    Returns
+    -------
+    (actual_ds, actual_var) or (None, None) if not found.
+    """
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "target" in roles:
+            if source.use_anomalies and f"{name}_anom_stand" in bundle:
+                ds = bundle[f"{name}_anom_stand"]
+                return ds, list(ds.data_vars)[0]
+            elif f"{name}_stand" in bundle:
+                ds = bundle[f"{name}_stand"]
+                return ds, list(ds.data_vars)[0]
+            break
+    return None, None
+
+
+def _get_target_var(prediction_result: dict, config) -> str:
+    """Get the target variable name from the prediction dataset."""
+    pred_ds = prediction_result["prediction"]
+    # DeepSensor prediction keys match the target variable names
+    for name, source in config.data_sources.items():
+        roles = source.role if isinstance(source.role, list) else [source.role]
+        if "target" in roles:
+            if source.use_anomalies:
+                candidate = f"{source.variable}_anom"
+            else:
+                candidate = source.variable
+            if candidate in pred_ds:
+                return candidate
+            break
+    # Fallback: first key in prediction dataset
+    return list(pred_ds.data_vars)[0] if hasattr(pred_ds, 'data_vars') else list(pred_ds.keys())[0]
+
+
+def plot_task(task, task_loader, config, title="", save_dir=None, date_str=None):
     """Plot a single task using DeepSensor's built-in plotting."""
     import deepsensor.plot
+
     fig = deepsensor.plot.task(task, task_loader)
     if title:
         plt.suptitle(title)
-    plt.show()
-    return fig
+    plt.tight_layout()
 
+    save_path = None
+    if save_dir:
+        save_dir = Path(save_dir)
+        filename = f"task_{date_str}.png" if date_str else "task.png"
+        save_path = save_dir / filename
+
+    _finish_plot(config, save_path)
+    return fig
 
 def plot_prediction_summary(
     prediction_result: dict,
     bundle: dict,
     config,
-    target_var: str = "sst_anom",
     save_dir=None,
 ):
     """
@@ -33,16 +123,13 @@ def plot_prediction_summary(
     pred_ds = prediction_result["prediction"]
     date = prediction_result["date"]
 
+    # Generic target variable resolution
+    target_var = _get_target_var(prediction_result, config)
     mean_da = pred_ds[target_var]["mean"]
     std_da = pred_ds[target_var]["std"]
 
     # Get actual values for this date
-    if "sst_anom_stand" in bundle:
-        actual_ds = bundle["sst_anom_stand"]
-    elif "sst_stand" in bundle:
-        actual_ds = bundle["sst_stand"]
-    else:
-        actual_ds = None
+    actual_ds, actual_var = _get_actual_ds(bundle, config)
 
     # Build lake mask on the prediction grid
     # Use actual SST valid pixels as mask (most reliable)
@@ -101,40 +188,35 @@ def plot_prediction_summary(
     plt.suptitle(f"Prediction Summary: {config.lake.upper()} — {date}", fontsize=14)
     plt.tight_layout()
 
+    save_path = None
     if save_dir:
-        save_dir = Path(save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_dir / f"prediction_{date}.png", dpi=150, bbox_inches="tight")
-        print(f"Saved: {save_dir / f'prediction_{date}.png'}")
+        save_path = Path(save_dir) / f"prediction_{date}.png"
+        print(f"Saved: {save_path}")
 
-    plt.show()
+    _finish_plot(config, save_path)
 
 
 def plot_uncertainty_vs_error(
     prediction_result: dict,
     bundle: dict,
-    target_var: str = "sst_anom",
+    config,
     save_dir=None,
 ):
     """
     Scatter plot of predictive std vs absolute error at each grid point.
-    Only includes lake surface points.
     """
     pred_ds = prediction_result["prediction"]
     date = prediction_result["date"]
 
+    target_var = _get_target_var(prediction_result, config)
     mean_da = pred_ds[target_var]["mean"]
     std_da = pred_ds[target_var]["std"]
 
-    if "sst_anom_stand" in bundle:
-        actual_ds = bundle["sst_anom_stand"]
-    elif "sst_stand" in bundle:
-        actual_ds = bundle["sst_stand"]
-    else:
+    actual_ds, actual_var = _get_actual_ds(bundle, config)
+    if actual_ds is None:
         print("No actual data available for comparison.")
         return
 
-    actual_var = list(actual_ds.data_vars)[0]
     actual = actual_ds[actual_var].sel(time=date, method="nearest")
 
     # Lake mask from actual SST valid pixels
@@ -203,12 +285,11 @@ def plot_uncertainty_vs_error(
 
     plt.tight_layout()
 
+    save_path = None
     if save_dir:
-        save_dir = Path(save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_dir / f"calibration_{date}.png", dpi=150, bbox_inches="tight")
+        save_path = Path(save_dir) / f"calibration_{date}.png"
 
-    plt.show()
+    _finish_plot(config, save_path)
 
 
 def plot_prediction_timeseries(
@@ -222,29 +303,18 @@ def plot_prediction_timeseries(
         n_context: int = 50,
         save_dir=None,
 ):
-    """
-    Plot predicted vs actual SST at a single point over time.
-    Shows mean ± std band.
-    """
     from .predict import predict_date
 
     means = []
     stds = []
     actuals = []
 
-    if "sst_anom_stand" in bundle:
-        actual_ds = bundle["sst_anom_stand"]
-    elif "sst_stand" in bundle:
-        actual_ds = bundle["sst_stand"]
-    else:
-        actual_ds = None
-
-    actual_var = list(actual_ds.data_vars)[0] if actual_ds else None
+    actual_ds, actual_var = _get_actual_ds(bundle, config)
 
     for date in dates:
         result = predict_date(model, task_loader, bundle, config, date, n_context)
         pred = result["prediction"]
-        target_var = list(pred.data_vars)[0]
+        target_var = _get_target_var(result, config)
 
         mean_val = float(pred[target_var]["mean"].sel(
             lat=lat, lon=lon, method="nearest").values)
@@ -253,10 +323,11 @@ def plot_prediction_timeseries(
         means.append(mean_val)
         stds.append(std_val)
 
-        if actual_ds:
+        if actual_ds is not None:
             act_val = float(actual_ds[actual_var].sel(
                 time=date, lat=lat, lon=lon, method="nearest").values)
             actuals.append(act_val)
+
 
     means = np.array(means)
     stds = np.array(stds)
@@ -274,9 +345,8 @@ def plot_prediction_timeseries(
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
 
+    save_path = None
     if save_dir:
-        save_dir = Path(save_dir)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_dir / f"timeseries_{lat}_{lon}.png", dpi=150, bbox_inches="tight")
+        save_path = Path(save_dir) / f"timeseries_{lat}_{lon}.png"
 
-    plt.show()
+    _finish_plot(config, save_path)

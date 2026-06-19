@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 import xarray as xr
+from dataclasses import dataclass, field
 
 from deepsensor.data import TaskLoader
 from deepsensor_greatlakes.utils import generate_random_coordinates
@@ -12,7 +13,14 @@ from deepsensor_greatlakes.utils import generate_random_coordinates
 from pipeline.config import PipelineConfig
 
 
-def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
+@dataclass
+class TaskLoaderConfig:
+    """Bundles a TaskLoader with its context sampling strategy."""
+    task_loader: TaskLoader
+    context_sampling_map: list = field(default_factory=list)
+
+
+def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoaderConfig:
     context = []
     context_sampling_map = []
     aux_at_targets_list = []
@@ -26,7 +34,6 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
                 target_ds = bundle[f"{name}_anom"]
             else:
                 target_ds = bundle[name]
-            # Target also goes as first context (sampled at random points)
             context.append(target_ds)
             context_sampling_map.append(source.sampling)
 
@@ -38,11 +45,9 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
             aux_at_targets_list.append(bundle[name])
 
         if "mask" in roles:
-            # mask_time_ds goes as context
             context.append(bundle["mask_time_ds"])
             context_sampling_map.append("all")
 
-    # Merge aux_at_targets into single dataset
     if aux_at_targets_list:
         aux_at_targets = xr.merge(aux_at_targets_list)
     else:
@@ -54,14 +59,14 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoader:
         aux_at_targets=aux_at_targets,
     )
 
-    # Store sampling map for gen_tasks
-    task_loader._context_sampling_map = context_sampling_map
-
-    return task_loader
+    return TaskLoaderConfig(
+        task_loader=task_loader,
+        context_sampling_map=context_sampling_map,
+    )
 
 
 def gen_tasks(
-    task_loader: TaskLoader,
+    tl_config: TaskLoaderConfig,
     dates,
     bundle: dict,
     config: PipelineConfig,
@@ -72,29 +77,6 @@ def gen_tasks(
     seed: int = None,
     progress: bool = True,
 ) -> list:
-    """
-    Generate tasks for a list of dates.
-
-    Parameters
-    ----------
-    task_loader : TaskLoader
-    dates : array-like of datetime
-    bundle : dict
-        Processed bundle (needs 'lakemask_sampling' and 'data_processor')
-    config : PipelineConfig
-        Falls back to config.training values if kwargs not provided
-    n_context : int, optional
-        Fixed number of context points. Overridden by vary_n_context.
-    vary_n_context : bool, optional
-    min_n, max_n : int, optional
-    seed : int, optional
-    progress : bool
-
-    Returns
-    -------
-    list of Task objects
-    """
-    # Resolve parameters: explicit kwargs > config values
     tc = config.training
     n_context = n_context if n_context is not None else tc.n_context_points
     vary_n_context = vary_n_context if vary_n_context is not None else tc.vary_n_context
@@ -104,43 +86,32 @@ def gen_tasks(
     if seed is not None:
         np.random.seed(seed)
 
-    if not hasattr(task_loader, "_context_sampling_map"):
-        raise AttributeError(
-            "TaskLoader is missing _context_sampling_map. "
-            "Build it using build_task_loader(config, bundle)."
-        )
-
     tasks = []
     skipped = []
 
     for date in tqdm(dates, disable=not progress, desc="Generating tasks"):
-        # Determine N for this task
         if vary_n_context:
             N = np.random.randint(min_n, max_n)
         else:
             N = n_context
 
-        # Generate random lake points for target variable context
         random_lake_points = generate_random_coordinates(
             bundle["lakemask_sampling"],
             N=N,
             data_processor=bundle["data_processor"],
         )
 
-        # Build context_sampling: random points for target, "all" for everything else
         context_sampling = []
-        for sampling_strategy in task_loader._context_sampling_map:
-            if sampling_strategy == "random_lake_points":
+        for strategy in tl_config.context_sampling_map:
+            if strategy == "random_lake_points":
                 context_sampling.append(random_lake_points)
-            elif sampling_strategy == "all":
+            elif strategy == "all":
                 context_sampling.append("all")
-            elif isinstance(sampling_strategy, int):
-                context_sampling.append(sampling_strategy)
             else:
-                context_sampling.append(int(sampling_strategy))
+                context_sampling.append(int(strategy))
 
         try:
-            task = task_loader(
+            task = tl_config.task_loader(
                 date,
                 context_sampling=context_sampling,
                 target_sampling="all",
@@ -157,7 +128,6 @@ def gen_tasks(
         print(f"Skipped {len(skipped)} dates due to errors.")
 
     return tasks
-
 
 def make_train_val_dates(config: PipelineConfig) -> tuple:
     """

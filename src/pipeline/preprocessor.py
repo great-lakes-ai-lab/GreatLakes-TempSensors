@@ -313,6 +313,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
 
         # Skip mask and pure aux_at_targets (they're static)
         if "context" not in roles and "target" not in roles:
+        # if not any(r in roles for r in ["context", "target", "aux_at_targets"]):  # This was noticed in a new iteration. I will need to verify
             continue
 
         ds = standardized[name]

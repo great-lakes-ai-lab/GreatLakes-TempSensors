@@ -23,23 +23,6 @@ def train_model(
     bundle: dict,
     config: PipelineConfig,
 ) -> dict:
-    """
-    Train the model and return results.
-
-    Parameters
-    ----------
-    model : ConvNP
-    task_loader : TaskLoader
-    train_tasks : list
-    val_tasks : list
-    bundle : dict
-        Must contain 'data_processor'
-    config : PipelineConfig
-
-    Returns
-    -------
-    dict with keys: 'losses', 'val_rmses', 'best_val_rmse', 'best_epoch'
-    """
     tc = config.training
     trainer = Trainer(model, lr=tc.lr)
 
@@ -47,11 +30,14 @@ def train_model(
     val_rmses = []
     best_val_rmse = np.inf
     best_epoch = 0
+    epochs_without_improvement = 0
 
     start_time = time.time()
 
     print(f"Training for {tc.n_epochs} epochs | lr={tc.lr} | "
           f"{len(train_tasks)} train tasks | {len(val_tasks)} val tasks")
+    if tc.patience > 0:
+        print(f"Early stopping enabled: patience={tc.patience}")
 
     for epoch in tqdm(range(1, tc.n_epochs + 1), desc="Training"):
         # Train
@@ -67,17 +53,27 @@ def train_model(
         if val_rmse < best_val_rmse:
             best_val_rmse = val_rmse
             best_epoch = epoch
+            epochs_without_improvement = 0
             save_trained_model(model, config)
+        else:
+            epochs_without_improvement += 1
 
         # Log periodically
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Epoch {epoch:3d}: loss={epoch_loss:.4f}, "
-                  f"val_rmse={val_rmse:.4f}, best={best_val_rmse:.4f}")
+                  f"val_rmse={val_rmse:.4f}, best={best_val_rmse:.4f} "
+                  f"(patience: {epochs_without_improvement}/{tc.patience if tc.patience > 0 else '∞'})")
+
+        # Early stopping check
+        if tc.patience > 0 and epochs_without_improvement >= tc.patience:
+            print(f"\nEarly stopping at epoch {epoch}. "
+                  f"No improvement for {tc.patience} epochs.")
+            break
 
         # Free memory
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        if torch.mps.is_available():
+        if torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
     elapsed = time.time() - start_time
@@ -91,6 +87,8 @@ def train_model(
         "val_rmses": val_rmses,
         "best_val_rmse": float(best_val_rmse),
         "best_epoch": best_epoch,
+        "total_epochs": len(losses),
+        "early_stopped": tc.patience > 0 and epochs_without_improvement >= tc.patience,
         "training_time_seconds": float(elapsed),
         "training_time_minutes": float(elapsed_min),
     }
@@ -158,6 +156,9 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "date_subsample_factor": tc.date_subsample_factor,
         "n_epochs": tc.n_epochs,
         "lr": tc.lr,
+        "patience": tc.patience,
+        "total_epochs": results["total_epochs"],
+        "early_stopped": results["early_stopped"],
         "internal_density": tc.internal_density,
         "n_context_points": tc.n_context_points,
         "vary_n_context": tc.vary_n_context,
@@ -183,7 +184,9 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
 
 def _save_training_plots(config: PipelineConfig, results: dict):
     """Save training curves plot."""
+    import matplotlib
     import matplotlib.pyplot as plt
+    from pipeline.plotting import _finish_plot
 
     model_dir = Path(config.paths.model_dir)
     plots_dir = model_dir / "plots"
@@ -211,7 +214,5 @@ def _save_training_plots(config: PipelineConfig, results: dict):
     axes[1].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(plots_dir / "training_curves.png", dpi=150, bbox_inches="tight")
-    plt.close()
-
+    _finish_plot(config, plots_dir / "training_curves.png")
     print(f"Training plots saved to: {plots_dir}")

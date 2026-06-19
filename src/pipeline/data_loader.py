@@ -23,7 +23,7 @@ def _load_single(source: DataSourceEntry, bbox: dict) -> xr.Dataset:
     """Load one dataset and clip to lake bounding box."""
 
     if source.format == "netcdf":
-        ds = xr.open_dataset(source.path)
+        ds = xr.open_dataset(source.path, chunks='auto')
     elif source.format == "zarr":
         ds = xr.open_zarr(source.path)
     else:
@@ -36,6 +36,11 @@ def _load_single(source: DataSourceEntry, bbox: dict) -> xr.Dataset:
         if missing:
             print(f"  Warning: variables {missing} not found in {source.path}")
         ds = ds[available]
+    elif source.variable:
+        if source.variable in ds.data_vars:
+            ds = ds[[source.variable]]
+        else:
+            raise KeyError(f"Variable '{source.variable}' not found in {source.path}")
 
     # Always clip to lake bounding box
     if bbox is not None:

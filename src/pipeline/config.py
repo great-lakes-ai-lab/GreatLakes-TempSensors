@@ -3,9 +3,10 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import yaml
 import shutil
+import os
 
 
 @dataclass
@@ -38,7 +39,7 @@ class DataSourceEntry:
     format: str
     variable: Optional[str] = None
     variables: Optional[list] = None
-    role: str = "context"                   # target, context, aux_at_targets, mask, or list
+    role: Union[str, list] = "context"                 # target, context, aux_at_targets, mask, or list
     use_anomalies: bool = False
     sampling: str = "all"                   # all, random_lake_points, or integer
     coarsen_factor: Optional[int] = None    # per-source coarsening
@@ -62,6 +63,7 @@ class TrainingConfig:
     vary_n_context: bool = True
     min_n_context: int = 20
     max_n_context: int = 75
+    patience: int = 0  # 0 = no early stopping
     include_bathy_as_context: bool = False
     bathy_context_sampling: str = "random_lake_points"  # "all", "random_lake_points", or integer (e.g. 1000)
 
@@ -70,6 +72,7 @@ class TrainingConfig:
 class RunConfig:
     name: str = "unnamed_run"
     notes: str = ""
+    display_plots: str = "auto"  # "auto", "show", or "save_only"
 
 
 @dataclass
@@ -114,6 +117,45 @@ class PipelineConfig:
     prediction: PredictionConfig = field(default_factory=PredictionConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
+    def validate(self):
+        """Fail-fast validation of config before pipeline runs."""
+        from lakes import LAKE_BOUNDS  # or whatever your dict is called
+
+        # Check lake name
+        if self.lake not in LAKE_BOUNDS:
+            available = list(LAKE_BOUNDS.keys())
+            raise ValueError(f"Unknown lake '{self.lake}'. Available: {available}")
+
+        # Check data source paths exist
+        for name, source in self.data_sources.items():
+            p = Path(source.path)
+            if not p.exists():
+                raise FileNotFoundError(f"Data source '{name}' path not found: {p}")
+
+        # Check date range consistency
+        import pandas as pd
+        fit_start, fit_end = pd.Timestamp(self.preprocessing.fit_range[0]), pd.Timestamp(
+            self.preprocessing.fit_range[1])
+        train_start, train_end = pd.Timestamp(self.training.train_range[0]), pd.Timestamp(self.training.train_range[1])
+        val_start, val_end = pd.Timestamp(self.training.val_range[0]), pd.Timestamp(self.training.val_range[1])
+
+        if fit_start > fit_end:
+            raise ValueError(f"fit_range start {fit_start} is after end {fit_end}")
+        if train_start > train_end:
+            raise ValueError(f"train_range start {train_start} is after end {train_end}")
+        if val_start > val_end:
+            raise ValueError(f"val_range start {val_start} is after end {val_end}")
+        if val_start <= train_end:
+            import warnings
+            warnings.warn(
+                f"Validation range overlaps with training range (val starts {val_start}, train ends {train_end})")
+
+        # Check output root is writable
+        output_root = Path(self.paths.output_root)
+        output_root.mkdir(parents=True, exist_ok=True)
+        if not os.access(output_root, os.W_OK):
+            raise PermissionError(f"Output root not writable: {output_root}")
+
 
 
 def load_config(config_path: str) -> PipelineConfig:
@@ -156,3 +198,5 @@ def copy_config_to_run_dir(config, config_path):
     run_dir = Path(config.paths.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(config_path, run_dir / "config_used.yaml")
+
+
