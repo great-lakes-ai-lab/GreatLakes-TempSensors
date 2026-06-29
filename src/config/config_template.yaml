@@ -1,9 +1,9 @@
 run:
-  name: run08_erie_baseline
-  notes: "Test to see if save_only plots works"
+  name: run04_michigan_plot_debug
+  notes: "Robust training f"
   display_plots: save_only  # "auto", "show", or "save_only"
 
-lake: erie
+lake: michigan
 environment: local
 
 paths:
@@ -18,7 +18,8 @@ data_sources:
     sampling: random_lake_points
     variable: sst
   era5:
-    path: ~/dev/deepsensor_projects/data/greatlakes_raw_temporal_ds_inputs/era5_vars.zarr
+#    path: ~/dev/deepsensor_projects/data/greatlakes_raw_temporal_ds_inputs/era5_vars.zarr
+    path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
     format: zarr
     variables: [t2m_daily_mean, ssr_daily_sum, u10_daily_mean, v10_daily_mean ]
     role: context
@@ -56,26 +57,26 @@ data_sources:
     coarsen_factor: 10
 
 preprocessing:
-  fit_range: ["2018-01-01", "2018-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
+  fit_range: ["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
   force_reprocess: true
 
 training:
-  train_range: ["2018-01-01", "2018-12-31"] # The range of data exposed to the model for training
-  val_range: ["2021-01-01", "2021-12-31"] # The range of data exposed for validation
-  date_subsample_factor: 6
-  n_epochs: 30
+  train_range: ["2018-01-01", "2020-12-31"] # The range of data exposed to the model for training
+  val_range: ["2021-01-01", "2022-12-31"] # The range of data exposed for validation
+  date_subsample_factor: 20
+  n_epochs: 60
   lr: 5.0e-5
-  patience: 10
-  internal_density: 150
+  patience: 15
+  internal_density: 250
   n_context_points: 60
-  vary_n_context: false
+  vary_n_context: true
   min_n_context: 10
   max_n_context: 200
 
 
 prediction:
   # Option 1: Specific dates
-  dates: ["2022-03-15", "2022-06-01", "2022-07-15", "2022-10-01"]
+  dates: ["2021-03-15", "2021-06-01", "2021-07-15", "2021-10-01", "2022-03-15", "2022-06-01", "2022-07-15", "2022-10-01"]
 
   # Option 2: Random sample from val range
 #  n_random: 10
@@ -87,3 +88,75 @@ prediction:
   # Option 4: Override context points for prediction
 #  every_n_days: 30
 #  n_context: 50
+
+active_learning:
+  # Dates over which to evaluate candidate sensor locations
+  eval_range: ["2021-06-01", "2022-08-31"]
+  eval_subsample_factor: 15   # every N days
+
+  # Number of new buoy/sensor locations to recommend
+  n_new_sensors: 10
+
+  # Sequential (non-parallel) options:
+  #   mean_stddev, mean_variance, mean_marginal_entropy, joint_entropy,
+  #   p_norm_stddev, oracle_rmse, oracle_mae, oracle_marginal_nll, oracle_joint_nll
+  #
+  # Parallel options:
+  #   stddev, context_dist, expected_improvement, random
+  #
+  # NOTE: If a parallel acquisition function is chosen, then
+  #       target_coarsen_factor must equal candidate_coarsen_factor.
+  acquisition_function: stddev
+
+  # Function-specific parameters:
+  #   acquisition_fn_p: p-norm exponent (only used by p_norm_stddev)
+  #     p=1 → mean absolute uncertainty
+  #     p=2 → emphasizes larger uncertainties
+  #     p≥5 → aggressively targets worst-predicted regions
+  #   acquisition_fn_seed: random seed (only used by random)
+  acquisition_fn_p: 2.0
+  acquisition_fn_seed: 42
+
+
+  # Candidate/search grid controls
+  # NOTE: If one of the parallel acquistion functions is chose then target coarsen must == candidate coarsen
+  candidate_coarsen_factor: 1   # coarsen search grid for speed
+  target_coarsen_factor: 1      # coarsen objective/target grid for speed
+
+  # Context construction for active learning tasks
+  # Context point source for active learning tasks
+  # Options:
+  #   "random"  - generate N random lake points (default, current behavior)
+  #   "geojson" - load fixed points from a GeoJSON file
+  #   "buoy"    - load from buoy observation NetCDF (future)
+  context_source: random
+
+ # For random: number of points to generate
+  n_context: 8
+  context_seed: 42
+  save_context_points: true # Save generated context points (only applies to "random")
+
+  # For geojson: path to file with Point features
+  context_geojson_path: null
+#  context_geojson_path:
+
+
+  # Not sure what these are but they are the defaults into the greedy algorithm
+  context_set_idx: 0
+  target_set_idx: 0
+
+  # GreedyAlgorithm options
+  model_infill_method: mean
+  diff: false
+  progress_bar: true
+
+  # Spacing constraints
+  min_dist_between_sensors_km: 10.0
+
+  # Optional future hook: existing buoy locations to avoid/reuse
+#  existing_sensors_path: /Users/jagraha/dev/deepsensor_projects/data/buoy/pretend_locations/fake_erie_buoy_points_2_shoreline.geojson
+  existing_sensors_path: null
+
+  # Outputs
+  save_acquisition_surface: true
+  plot_results: true

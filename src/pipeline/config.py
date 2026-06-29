@@ -107,6 +107,57 @@ class PredictionConfig:
 
 
 @dataclass
+class ActiveLearningConfig:
+    eval_range: tuple = ("2021-01-01", "2021-12-31")
+    eval_subsample_factor: int = 14
+
+    n_new_sensors: int = 5
+
+    # Supported acquistion function options:
+    #
+    # Sequential (non-parallel):
+    #   mean_stddev, mean_variance, mean_marginal_entropy, joint_entropy,
+    #   p_norm_stddev, oracle_rmse, oracle_mae, oracle_marginal_nll, oracle_joint_nll
+    #
+    # Parallel:
+    #   stddev, context_dist, expected_improvement, random
+    acquisition_function: str = "mean_stddev"
+
+    # Parameters for specific acquisition functions
+    acquisition_fn_p: float = 1.0  # p-norm exponent for p_norm_stddev
+    acquisition_fn_seed: int = 42
+
+    # Task context settings
+    context_source: str = "random"  # "random", "geojson", or "buoy" (future)
+    n_context: int = 50
+    context_seed: int = 42
+    context_geojson_path: str = None
+    save_context_points: bool = True
+
+    context_set_idx: int = 0
+    target_set_idx: int = 0
+
+    # DeepSensor GreedyAlgorithm settings
+    model_infill_method: str = "mean"
+    diff: bool = False
+    progress_bar: bool = True
+
+    # Grid controls
+    candidate_coarsen_factor: int = 4
+    target_coarsen_factor: int = 4
+
+    # Placement constraints
+    min_dist_between_sensors_km: float = 0.0
+
+    # Future hook for existing buoy locations
+    existing_sensors_path: str = None
+
+    # Outputs
+    save_acquisition_surface: bool = True
+    plot_results: bool = True
+
+
+@dataclass
 class PipelineConfig:
     lake: str = "erie"
     environment: str = "local"  # "local" or "hpc"
@@ -115,6 +166,7 @@ class PipelineConfig:
     preprocessing: PreprocessingConfig = field(default_factory=PreprocessingConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     prediction: PredictionConfig = field(default_factory=PredictionConfig)
+    active_learning: ActiveLearningConfig = field(default_factory=ActiveLearningConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
     def validate(self):
@@ -182,6 +234,7 @@ def load_config(config_path: str) -> PipelineConfig:
     preprocessing = PreprocessingConfig(**raw.get("preprocessing", {}))
     training = TrainingConfig(**raw.get("training", {}))
     prediction = PredictionConfig(**raw.get("prediction", {}))
+    active_learning = ActiveLearningConfig(**raw.get("active_learning", {}))
 
     return PipelineConfig(
         lake=raw.get("lake", "erie"),
@@ -191,12 +244,16 @@ def load_config(config_path: str) -> PipelineConfig:
         preprocessing=preprocessing,
         training=training,
         prediction=prediction,
+        active_learning=active_learning,
         run=run_cfg,
     )
 
 def copy_config_to_run_dir(config, config_path):
     run_dir = Path(config.paths.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(config_path, run_dir / "config_used.yaml")
+    try:
+        shutil.copy2(config_path, run_dir / "config_used.yaml")
+    except shutil.SameFileError:
+        pass
 
 

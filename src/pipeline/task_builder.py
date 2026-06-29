@@ -66,17 +66,42 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoaderConfig:
 
 
 def gen_tasks(
-    tl_config: TaskLoaderConfig,
+    tl_config,
     dates,
     bundle: dict,
-    config: PipelineConfig,
+    config,
     n_context: int = None,
     vary_n_context: bool = None,
     min_n: int = None,
     max_n: int = None,
     seed: int = None,
+    fixed_context_points: np.ndarray = None,
     progress: bool = True,
 ) -> list:
+    """
+    Generate tasks for a list of dates.
+
+    Parameters
+    ----------
+    tl_config : TaskLoaderConfig
+    dates : array-like of datetime
+    bundle : dict
+        Processed bundle (needs 'lakemask_sampling' and 'data_processor')
+    config : PipelineConfig
+    n_context : int, optional
+    vary_n_context : bool, optional
+    min_n, max_n : int, optional
+    seed : int, optional
+    fixed_context_points : np.ndarray, optional
+        Array of shape (2, N) with normalized [lat, lon] coordinates.
+        If provided, these exact points are used as context for every task.
+        Overrides random generation and vary_n_context.
+    progress : bool
+
+    Returns
+    -------
+    list of Task objects
+    """
     tc = config.training
     n_context = n_context if n_context is not None else tc.n_context_points
     vary_n_context = vary_n_context if vary_n_context is not None else tc.vary_n_context
@@ -90,17 +115,22 @@ def gen_tasks(
     skipped = []
 
     for date in tqdm(dates, disable=not progress, desc="Generating tasks"):
-        if vary_n_context:
-            N = np.random.randint(min_n, max_n)
+        # Determine context points for this task
+        if fixed_context_points is not None:
+            random_lake_points = fixed_context_points
         else:
-            N = n_context
+            if vary_n_context:
+                N = np.random.randint(min_n, max_n)
+            else:
+                N = n_context
 
-        random_lake_points = generate_random_coordinates(
-            bundle["lakemask_sampling"],
-            N=N,
-            data_processor=bundle["data_processor"],
-        )
+            random_lake_points = generate_random_coordinates(
+                bundle["lakemask_sampling"],
+                N=N,
+                data_processor=bundle["data_processor"],
+            )
 
+        # Build context_sampling list
         context_sampling = []
         for strategy in tl_config.context_sampling_map:
             if strategy == "random_lake_points":
@@ -128,6 +158,7 @@ def gen_tasks(
         print(f"Skipped {len(skipped)} dates due to errors.")
 
     return tasks
+
 
 def make_train_val_dates(config: PipelineConfig) -> tuple:
     """

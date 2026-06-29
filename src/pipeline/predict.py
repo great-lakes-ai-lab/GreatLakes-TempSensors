@@ -26,6 +26,11 @@ def predict_date(
         data_processor=bundle["data_processor"],
     )
 
+    # Unnormalize context points for plotting
+    context_points_unnorm = bundle["data_processor"].map_coord_array(
+        random_lake_points, unnorm=True
+    )
+
     context_sampling = []
     for strategy in tl_config.context_sampling_map:
         if strategy == "random_lake_points":
@@ -71,6 +76,7 @@ def predict_date(
         "prediction": prediction_ds,
         "date": date,
         "context_points": random_lake_points,
+        "context_points_latlon": context_points_unnorm,  # (2, N): [lats, lons]
     }
 
 def run_predictions(config, bundle, tl_config):

@@ -110,6 +110,7 @@ def plot_task(task, task_loader, config, title="", save_dir=None, date_str=None)
     _finish_plot(config, save_path)
     return fig
 
+
 def plot_prediction_summary(
     prediction_result: dict,
     bundle: dict,
@@ -118,7 +119,7 @@ def plot_prediction_summary(
 ):
     """
     Four-panel plot: actual, predicted mean, uncertainty, and error.
-    All panels masked to lake surface only.
+    All panels masked to lake surface only. Context points overlaid.
     """
     pred_ds = prediction_result["prediction"]
     date = prediction_result["date"]
@@ -131,10 +132,11 @@ def plot_prediction_summary(
     # Get actual values for this date
     actual_ds, actual_var = _get_actual_ds(bundle, config)
 
+    # Context points for overlay (unnormalized lat/lon)
+    context_latlons = prediction_result.get("context_points_latlon", None)
+
     # Build lake mask on the prediction grid
-    # Use actual SST valid pixels as mask (most reliable)
     if actual_ds is not None:
-        actual_var = list(actual_ds.data_vars)[0]
         actual = actual_ds[actual_var].sel(time=date, method="nearest")
         lake_mask = actual.notnull()
     else:
@@ -150,21 +152,45 @@ def plot_prediction_summary(
         std_masked = std_da
         actual_masked = actual if actual_ds else None
 
+    # ─── Compute shared symmetric color range for actual + predicted ───
+    # Centers on zero so white = no anomaly
+    vmax_actual = float(np.nanmax(np.abs(actual_masked.values))) if actual_masked is not None else 0
+    vmax_pred = float(np.nanmax(np.abs(mean_masked.values)))
+    vmax_shared = max(vmax_actual, vmax_pred)
+
+    # Avoid zero range
+    if vmax_shared == 0:
+        vmax_shared = 1.0
+
+    # ─── Plot ──────────────────────────────────────────────────────────
+
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     # --- Panel 1: Actual ---
     ax = axes[0, 0]
     if actual_masked is not None:
-        actual_masked.plot(ax=ax, cmap="RdBu_r", add_colorbar=True)
-        ax.set_title(f"Actual ({date})")
+        actual_masked.plot(
+            ax=ax,
+            cmap="RdBu_r",
+            vmin=-vmax_shared,
+            vmax=vmax_shared,
+            add_colorbar=True,
+        )
+        ax.set_title(f"Actual Anomaly ({date})")
     else:
         ax.set_title("Actual (not available)")
         ax.text(0.5, 0.5, "N/A", ha="center", va="center", transform=ax.transAxes)
 
     # --- Panel 2: Predicted Mean ---
     ax = axes[0, 1]
-    mean_masked.plot(ax=ax, cmap="RdBu_r", add_colorbar=True)
-    ax.set_title(f"Predicted Mean ({date})")
+    mean_masked.plot(
+        ax=ax,
+        cmap="RdBu_r",
+        vmin=-vmax_shared,
+        vmax=vmax_shared,
+        add_colorbar=True,
+    )
+    ax.set_title(f"Predicted Anomaly ({date})")
 
     # --- Panel 3: Uncertainty (Std) ---
     ax = axes[1, 0]
@@ -176,16 +202,52 @@ def plot_prediction_summary(
     if actual_masked is not None:
         error = mean_masked - actual_masked.interp_like(mean_masked)
         max_err = float(np.nanmax(np.abs(error.values)))
+        if max_err == 0:
+            max_err = 1.0
+
         error.plot(
-            ax=ax, cmap="RdBu_r",
-            vmin=-max_err, vmax=max_err,
+            ax=ax,
+            cmap="PuOr",
+            vmin=-max_err,
+            vmax=max_err,
             add_colorbar=True,
         )
         ax.set_title(f"Error: Predicted - Actual ({date})")
     else:
         ax.set_title("Error (actual not available)")
 
-    plt.suptitle(f"Prediction Summary: {config.lake.upper()} — {date}", fontsize=14)
+    # --- Overlay context points on all panels ---
+    if context_latlons is not None:
+        lats = context_latlons[0]
+        lons = context_latlons[1]
+        for ax in axes.flat:
+            ax.scatter(
+                lons, lats,
+                facecolors="none",
+                edgecolors="black",
+                linewidths=0.8,
+                s=20,
+                zorder=5,
+                alpha=0.7,
+            )
+
+    # Legend for context points (on predicted panel only)
+    if context_latlons is not None:
+        axes[0, 1].scatter(
+            [], [],
+            facecolors="none",
+            edgecolors="black",
+            linewidths=0.8,
+            s=20,
+            label=f"Context points (n={context_latlons.shape[1]})",
+        )
+        axes[0, 1].legend(loc="lower right", fontsize=8)
+
+    plt.suptitle(
+        f"Prediction Summary: {config.lake.upper()} — {date}\n"
+        f"(Anomaly relative to monthly climatology)",
+        fontsize=14,
+    )
     plt.tight_layout()
 
     save_path = None
@@ -194,7 +256,6 @@ def plot_prediction_summary(
         print(f"Saved: {save_path}")
 
     _finish_plot(config, save_path)
-
 
 def plot_uncertainty_vs_error(
     prediction_result: dict,

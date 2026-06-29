@@ -39,7 +39,7 @@ def main():
         stages = [s.strip() for s in args.stage.split(",")]
 
     # Only copy config to run dir if we're modifying outputs
-    read_only_stages = {"diagnostics", "predict"}
+    read_only_stages = {"diagnostics", "predict", "active_learning"}
     if all(s in read_only_stages for s in stages):
         config.preprocessing.force_reprocess = False
     else:
@@ -86,7 +86,11 @@ def main():
     if "predict" in stages:
         from pipeline.predict import run_predictions
         run_predictions(config, bundle, tl_config)
-        
+
+    # 9. Active learning
+    if "active_learning" in stages:
+        from pipeline.active_learning import run_active_learning
+        run_active_learning(config, bundle, tl_config)
 
     print(f"\nRun '{config.run.name}' complete.")
 
@@ -111,8 +115,9 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run05_erie_baseline/config_used.yaml",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
-        "--stage", "all"
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run03_michigan_plot_debug/config_used.yaml",
+        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_hpc_files_test.yaml",
+        "--stage", "train",
     ]
     main()
