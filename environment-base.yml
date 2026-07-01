@@ -56,7 +56,7 @@ dependencies:
   # --- Pip-only packages ---
   - pip
   - pip:
-    - deepsensor @ git+https://github.com/jagraha/deepsensor.git@fix/local-patches  # Will need to update if remote changes are accepted
+    - deepsensor @ git+https://github.com/jeremyg19/deepsensor.git@fix/local-patches  # Will need to update if remote changes are accepted
     - neuralprocesses==0.2.7
     - wandb
     - tqdm
