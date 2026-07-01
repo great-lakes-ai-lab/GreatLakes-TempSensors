@@ -1,4 +1,4 @@
-name: deepsensor-clean
+name: deepsensor-gl
 channels:
   - conda-forge
 

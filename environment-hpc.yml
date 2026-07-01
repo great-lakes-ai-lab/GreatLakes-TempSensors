@@ -1,7 +1,7 @@
 # Apply AFTER environment-base.yml on Great Lakes GPU nodes:
 #   mamba env create -f environment-base.yml
 #   mamba env update -f environment-hpc.yml
-name: deepsensor-clean
+name: deepsensor-gl
 channels:
   - conda-forge
 
