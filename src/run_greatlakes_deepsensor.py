@@ -115,9 +115,7 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run03_michigan_plot_debug/config_used.yaml",
-        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_template.yaml",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_hpc_files_test.yaml",
-        "--stage", "train",
+        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run01_erie_full/config_used.yaml",
+        "--stage", "active_learning",
     ]
     main()

@@ -1,9 +1,9 @@
 run:
-  name: run04_michigan_plot_debug
-  notes: "Robust training f"
+  name: run02_erie_debug_delete
+  notes: "run for debugging git issue"
   display_plots: save_only  # "auto", "show", or "save_only"
 
-lake: michigan
+lake: erie
 environment: local
 
 paths:
@@ -11,7 +11,7 @@ paths:
 
 data_sources:
   sst:
-    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/glsea_sst.zarr
+    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/glsea3_sst.zarr
     format: zarr
     role: target
     use_anomalies: true
@@ -21,15 +21,15 @@ data_sources:
 #    path: ~/dev/deepsensor_projects/data/greatlakes_raw_temporal_ds_inputs/era5_vars.zarr
     path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
     format: zarr
-    variables: [t2m_daily_mean, ssr_daily_sum, u10_daily_mean, v10_daily_mean ]
+    variables: [t2m_daily_mean, ssr_daily_sum, u10_daily_mean, v10_daily_mean]
     role: context
     sampling: all
-  ice_concentration:
-    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/ice_concentration.zarr
-    format: zarr
-    variable: ice_concentration
-    role: context
-    sampling: all
+#  ice_concentration:
+#    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/ice_concentration.zarr
+#    format: zarr
+#    variable: ice_concentration
+#    role: context
+#    sampling: all
   bathy:
     path: ~/dev/deepsensor_projects/data/bathy/gl_bathy_depth_3arcsec_clean.nc
     format: netcdf
@@ -43,31 +43,31 @@ data_sources:
       variable: mask
       role: mask
       coarsen_factor: 25
-  dist_to_land:
-    path: ~/dev/deepsensor_projects/data/bathy/gl_dist_to_land_3arcsec.nc
-    format: netcdf
-    variable: dist_to_land
-    role: [context, aux_at_targets]
-    coarsen_factor: 10
-  core_depth:
-    path: ~/dev/deepsensor_projects/data/bathy/gl_core_depth_3arcsec.nc
-    format: netcdf
-    variable: core_depth
-    role: [context, aux_at_targets]
-    coarsen_factor: 10
+#  dist_to_land:
+#    path: ~/dev/deepsensor_projects/data/bathy/gl_dist_to_land_3arcsec.nc
+#    format: netcdf
+#    variable: dist_to_land
+#    role: [context, aux_at_targets]
+#    coarsen_factor: 10
+#  core_depth:
+#    path: ~/dev/deepsensor_projects/data/bathy/gl_core_depth_3arcsec.nc
+#    format: netcdf
+#    variable: core_depth
+#    role: [context, aux_at_targets]
+#    coarsen_factor: 10
 
 preprocessing:
-  fit_range: ["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
-  force_reprocess: true
+  fit_range: ["2017-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
+  force_reprocess: false
 
 training:
-  train_range: ["2018-01-01", "2020-12-31"] # The range of data exposed to the model for training
-  val_range: ["2021-01-01", "2022-12-31"] # The range of data exposed for validation
-  date_subsample_factor: 20
+  train_range: ["2018-01-01", "2021-12-31"] # The range of data exposed to the model for training
+  val_range: ["2022-01-01", "2023-12-31"] # The range of data exposed for validation
+  date_subsample_factor: 60
   n_epochs: 60
   lr: 5.0e-5
   patience: 15
-  internal_density: 250
+  internal_density: 50
   n_context_points: 60
   vary_n_context: true
   min_n_context: 10
@@ -92,7 +92,7 @@ prediction:
 active_learning:
   # Active learning experiment name (creates subfolder)
   name: al_stddev_50ctx_20km
-
+  
   # Dates over which to evaluate candidate sensor locations
   eval_range: ["2021-06-01", "2022-08-31"]
   eval_subsample_factor: 15   # every N days

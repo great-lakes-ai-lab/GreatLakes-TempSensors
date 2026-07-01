@@ -8,7 +8,7 @@ import xarray as xr
 from dataclasses import dataclass, field
 
 from deepsensor.data import TaskLoader
-from deepsensor_greatlakes.utils import generate_random_coordinates
+from utils.coordinates import generate_random_coordinates
 
 from pipeline.config import PipelineConfig
 

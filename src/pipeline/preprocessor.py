@@ -11,8 +11,8 @@ import pandas as pd
 import xarray as xr
 
 from deepsensor.data import DataProcessor, construct_circ_time_ds
-from deepsensor_greatlakes.utils import standardize_dates, standardize_coords
-from deepsensor_greatlakes.preprocessor import SeasonalCycleProcessor
+from utils.coordinates import standardize_dates, standardize_coords
+from utils.seasonal import SeasonalCycleProcessor
 
 from pipeline.config import PipelineConfig
 

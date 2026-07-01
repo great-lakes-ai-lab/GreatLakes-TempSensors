@@ -322,7 +322,7 @@ def fill_missing_dates_with_zero_ice(zarr_path, time_dim='time',
 # USAGE
 # ====================================================================
 if __name__ == "__main__":
-    zarr_path = "/Users/jagraha/dev/deepsensor_projects/data/greatlakes_raw_temporal_ds_inputs/GL_Ice_Concentration_GCS.zarr"
+    zarr_path = "/Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/ice_concentration.zarr"
 
     # First, do a dry run to see what would happen
     missing = fill_missing_dates_with_zero_ice(

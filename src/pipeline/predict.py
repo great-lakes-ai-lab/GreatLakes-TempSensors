@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from deepsensor_greatlakes.utils import generate_random_coordinates
+from utils.coordinates import generate_random_coordinates
 from pipeline.model import load_trained_model
 
 

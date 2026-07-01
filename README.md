@@ -24,7 +24,7 @@ The summer fellow will use DeepSensor, an open source Python package for probabi
 
 ## Environment Setup 
 
-Please refer to the [environment setup guide](ENVIRONMENT_SETUP.md) for detailed instructions on how to set up `deepsensor` for different environments and purposes.
+Please refer to the [environment setup guide](legacy/ENVIRONMENT_SETUP.md) for detailed instructions on how to set up `deepsensor` for different environments and purposes.
 
 ## Usage
 Instructions on how to train the DeepSensor model, analyze the data, and propose sensor locations will be provided in the `docs` directory or as separate markdown files within this repository.

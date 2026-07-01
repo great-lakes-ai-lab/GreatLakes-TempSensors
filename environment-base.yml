@@ -1,0 +1,64 @@
+name: deepsensor-clean
+channels:
+  - conda-forge
+
+dependencies:
+  # --- Core ---
+  - python=3.11
+  - numpy
+  - pandas
+  - xarray
+  - dask
+
+  # --- Deep learning ---
+  - pytorch
+  - torchvision
+  - torchaudio
+
+  # --- Geospatial ---
+  - cartopy
+  - geopandas
+  - fiona
+  - gdal
+  - proj
+  - pyproj
+  - rasterio
+  - rioxarray
+  - shapely
+  - odc-geo
+  - odc-stac
+  - xesmf
+
+  # --- Data I/O ---
+  - h5netcdf
+  - netcdf4
+  - zarr
+  - adlfs
+  - arraylake
+  - icechunk
+  - gcsfs
+  - s3fs
+
+  # --- Cloud/STAC ---
+  - planetary-computer
+  - pystac-client
+  - stackstac
+
+  # --- Jupyter/Dev ---
+  - ipykernel
+  - ipywidgets
+  - jupyterlab
+  - pytest
+
+  # --- Visualization ---
+  - seaborn
+
+  # --- Pip-only packages ---
+  - pip
+  - pip:
+    - deepsensor @ git+https://github.com/jagraha/deepsensor.git@fix/local-patches  # Will need to update if remote changes are accepted
+    - neuralprocesses==0.2.7
+    - wandb
+    - tqdm
+    - pooch
+    - -e .

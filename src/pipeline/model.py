@@ -7,7 +7,7 @@ import torch
 import deepsensor.torch
 from deepsensor.model import ConvNP
 from deepsensor.train import set_gpu_default_device
-from deepsensor_greatlakes.model import save_model, load_convnp_model
+from utils.model_io import save_model, load_convnp_model
 
 from pipeline.config import PipelineConfig
 

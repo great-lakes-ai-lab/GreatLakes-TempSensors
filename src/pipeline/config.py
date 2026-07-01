@@ -19,6 +19,7 @@ class PathsConfig:
     model_dir: str = ""
     data_processor_dir: str = ""
     seasonal_dir: str = ""
+    active_learning_dir: str = ""
 
     def resolve(self, run_name: str):
         """Derive all output paths from output_root/run_name."""
@@ -31,6 +32,12 @@ class PathsConfig:
         self.model_dir = str(run_dir / "model")
         self.data_processor_dir = str(run_dir / "deepsensor_config" / "data_processor")
         self.seasonal_dir = str(run_dir / "seasonal_cycles")
+        self.active_learning_dir = str(run_dir / "active_learning")
+
+    def resolve_active_learning(self, al_name: str) -> Path:
+        """Resolve the active learning experiment directory."""
+        al_dir = Path(self.active_learning_dir) / al_name
+        return al_dir
 
 
 @dataclass
@@ -108,6 +115,8 @@ class PredictionConfig:
 
 @dataclass
 class ActiveLearningConfig:
+    name: str = "default"  # creates subfolder: active_learning/<name>/
+
     eval_range: tuple = ("2021-01-01", "2021-12-31")
     eval_subsample_factor: int = 14
 
