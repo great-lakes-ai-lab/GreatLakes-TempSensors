@@ -137,12 +137,22 @@ def run_active_learning(config, bundle, tl_config):
 
     if al_cfg.save_acquisition_surface:
         nc_path = output_dir / "acquisition_surfaces.nc"
+        nc_mean_path = output_dir / "acquisition_surface_mean.nc"
         try:
             acquisition_fn_ds.to_netcdf(nc_path)
             print(f"Saved acquisition surfaces: {nc_path}")
         except Exception as e:
             print(f"Warning: Could not save acquisition surface as NetCDF: {e}")
             np.save(output_dir / "acquisition_surfaces.npy", acquisition_fn_ds.values)
+        try:
+            # Take the mean of the acquistion surface and save it 
+            mean_surface = acquisition_fn_ds.mean(["iteration", "time"],skipna=True)
+            mean_surface.to_netcdf(nc_mean_path)
+            print(f"Saved acquisition surfaces: {nc_mean_path}")
+        except Exception as e:
+            print(f"Warning: Could not save acquisition surface as NetCDF: {e}")
+            pass
+
 
     if al_cfg.plot_results:
         plot_active_learning_results(
@@ -530,7 +540,7 @@ def resolve_context_points(config, bundle) -> np.ndarray:
 
 def _generate_random_context(al_cfg, bundle) -> np.ndarray:
     """Generate random lake points and optionally save them."""
-    from deepsensor_greatlakes.utils import generate_random_coordinates
+    from ..utils import generate_random_coordinates
 
     np.random.seed(al_cfg.context_seed)
 

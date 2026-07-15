@@ -1,6 +1,6 @@
 run:
-  name: run02_erie_debug_delete
-  notes: "run for debugging git issue"
+  name: run00_erie_check_ds-gl
+  notes: "A run to see if this new env works with GL-TS and the new environemnt"
   display_plots: save_only  # "auto", "show", or "save_only"
 
 lake: erie
@@ -92,7 +92,7 @@ prediction:
 active_learning:
   # Active learning experiment name (creates subfolder)
   name: al_stddev_50ctx_20km
-  
+
   # Dates over which to evaluate candidate sensor locations
   eval_range: ["2021-06-01", "2022-08-31"]
   eval_subsample_factor: 15   # every N days
