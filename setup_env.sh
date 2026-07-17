@@ -1,26 +1,38 @@
+
 #!/bin/bash
 # setup_env.sh — Sets up the deepsensor-gl environment
 # Run from the GreatLakes-TempSensors repo root
+#
+# USAGE:
+#   source setup_env.sh
+#
+# NOTE: Must be sourced (not executed) for conda activate to work
 
 set -e
 
 ENV_NAME="deepsensor-gl"
 DEEPSENSOR_REPO="git@github.com:jeremyg19/deepsensor.git"
 DEEPSENSOR_BRANCH="fix/local-patches"
-DEEPSENSOR_DIR="../deepsensor"  # relative to this repo
+DEEPSENSOR_DIR="../deepsensor"
+
+# Detect conda vs mamba
+if command -v mamba &> /dev/null; then
+    CONDA_CMD="mamba"
+else
+    echo "mamba not found, using conda"
+    CONDA_CMD="conda"
+fi
 
 echo "=== Creating conda environment ==="
-mamba env create -f environment-base.yml || echo "Environment already exists, updating..."
-mamba env update -f environment-base.yml --prune
+$CONDA_CMD env create -f environment-base.yml 2>/dev/null || $CONDA_CMD env update -f environment-base.yml --prune
 
 # HPC-only: add CUDA support
 if command -v nvidia-smi &> /dev/null || [[ $(hostname) == *"greatlakes"* ]] || [[ $(hostname) == *"gl-"* ]]; then
     echo "=== Detected HPC, adding CUDA support ==="
-    mamba env update -f environment-hpc.yml
+    $CONDA_CMD env update -f environment-hpc.yml
 fi
 
 echo "=== Activating environment ==="
-eval "$(conda shell.bash hook)"
 conda activate $ENV_NAME
 
 echo "=== Installing DeepSensor (editable) ==="
@@ -44,7 +56,6 @@ pip install -e .
 
 echo ""
 echo "=== Setup complete ==="
-echo "Activate with: mamba activate $ENV_NAME"
 python -c "from deepsensor.data import DataProcessor; print('DeepSensor: OK')"
 python -c "from utils.coordinates import standardize_coords; print('GL-TS utils: OK')"
 python -c "from pipeline.config import load_config; print('GL-TS pipeline: OK')"
