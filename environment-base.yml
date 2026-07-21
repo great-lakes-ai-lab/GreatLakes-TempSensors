@@ -10,11 +10,6 @@ dependencies:
   - xarray
   - dask
 
-  # --- Deep learning ---
-  - pytorch
-  - torchvision
-  - torchaudio
-
   # --- Geospatial ---
   - cartopy
   - geopandas

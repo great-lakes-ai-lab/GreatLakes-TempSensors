@@ -87,16 +87,9 @@ create_env() {
         $CONDA_CMD env create -f "$REPO_ROOT/environment-base.yml"
     fi
 
-    # Verify it was created
     if ! conda env list | grep -q "$ENV_NAME"; then
         echo "ERROR: Environment creation failed."
         return 1
-    fi
-
-    # HPC-only: add CUDA support
-    if [[ $ON_HPC == true ]]; then
-        echo "=== Adding CUDA support ==="
-        $CONDA_CMD env update -n "$ENV_NAME" -f "$REPO_ROOT/environment-hpc.yml"
     fi
 
     echo "Environment '$ENV_NAME': OK"
@@ -107,6 +100,15 @@ install_packages() {
     eval "$(conda shell.bash hook)"
     conda activate "$ENV_NAME" || { echo "ERROR: Could not activate $ENV_NAME"; return 1; }
 
+    echo "=== Installing PyTorch ==="
+    if [[ $ON_HPC == true ]]; then
+        echo "Installing PyTorch with CUDA 12.1..."
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 || { echo "ERROR: PyTorch install failed"; return 1; }
+    else
+        echo "Installing PyTorch (CPU/MPS)..."
+        pip install torch torchvision torchaudio || { echo "ERROR: PyTorch install failed"; return 1; }
+    fi
+
     echo "=== Installing DeepSensor (editable) ==="
     pip install -e "$DEEPSENSOR_DIR"'[torch]' || { echo "ERROR: DeepSensor install failed"; return 1; }
 
@@ -115,6 +117,7 @@ install_packages() {
 
     echo ""
     echo "=== Verifying installation ==="
+    python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
     python -c "from deepsensor.data import DataProcessor; print('DeepSensor: OK')"
     python -c "from pipeline.config import load_config; print('GL-TS pipeline: OK')"
 }
