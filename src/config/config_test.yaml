@@ -64,7 +64,7 @@ training:
   train_range: ["2018-01-01", "2021-12-31"] # The range of data exposed to the model for training
   val_range: ["2022-01-01", "2023-12-31"] # The range of data exposed for validation
   date_subsample_factor: 60
-  n_epochs: 60
+  n_epochs: 10
   lr: 5.0e-5
   patience: 15
   internal_density: 50
