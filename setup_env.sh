@@ -100,6 +100,15 @@ install_packages() {
     eval "$(conda shell.bash hook)"
     conda activate "$ENV_NAME" || { echo "ERROR: Could not activate $ENV_NAME"; return 1; }
 
+    # macOS OpenMP fix
+    if [[ $ON_HPC == false ]]; then
+        ACTIVATE_DIR="$(conda info --envs | grep $ENV_NAME | awk '{print $NF}')/etc/conda/activate.d"
+        mkdir -p "$ACTIVATE_DIR"
+        echo 'export KMP_DUPLICATE_LIB_OK=TRUE' > "$ACTIVATE_DIR/omp_fix.sh"
+        export KMP_DUPLICATE_LIB_OK=TRUE  # also set for current session
+        echo "macOS OpenMP fix installed."
+    fi
+
     echo "=== Installing PyTorch ==="
     if [[ $ON_HPC == true ]]; then
         echo "Installing PyTorch with CUDA 12.1..."
@@ -121,7 +130,6 @@ install_packages() {
     python -c "from deepsensor.data import DataProcessor; print('DeepSensor: OK')"
     python -c "from pipeline.config import load_config; print('GL-TS pipeline: OK')"
 }
-
 # --- Main logic ---
 
 if [[ $ON_LOGIN == true ]]; then
