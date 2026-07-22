@@ -164,3 +164,9 @@ test-results/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Ignore all config yamls except the tracked ones
+src/config/*.yaml
+!src/config/config_template.yaml
+!src/config/config_test_HPC.yaml
+!src/config/config_test_local.yaml
