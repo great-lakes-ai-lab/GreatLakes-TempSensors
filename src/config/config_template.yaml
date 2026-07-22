@@ -4,7 +4,6 @@ run:
   display_plots: save_only  # "auto", "show", or "save_only"
 
 lake: michigan
-environment: local
 
 paths:
   output_root: ~/dev/deepsensor_projects/runs/
