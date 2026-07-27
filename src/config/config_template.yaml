@@ -1,7 +1,7 @@
 run:
-  name: run04_michigan_plot_debug
-  notes: "Robust training f"
-  display_plots: save_only  # "auto", "show", or "save_only"
+  name: default_run
+  notes: "This is a template config yaml. Make a copy of it and rename it "
+  display_plots: save_only  # "auto", "show", or "save_only" Just keep it on save_only unless debugging and looking at plots live
 
 lake: michigan
 
@@ -10,14 +10,13 @@ paths:
 
 data_sources:
   sst:
-    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/glsea_sst.zarr
-    format: zarr
-    role: target
-    use_anomalies: true
-    sampling: random_lake_points
+    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/glsea_sst.zarr  # The path to the data input
+    format: zarr  # netcdf or zarr
+    role: target  # target, context, aux_at_target. Use list for multiple
+    use_anomalies: true  # This will trigger the seasonalcyle processer and compute the anomalies rather than direct values
+    sampling: random_lake_points  # random_lake_points: will use the randomly generated N context points, all: uses all points
     variable: sst
   era5:
-#    path: ~/dev/deepsensor_projects/data/greatlakes_raw_temporal_ds_inputs/era5_vars.zarr
     path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
     format: zarr
     variables: [t2m_daily_mean, ssr_daily_sum, u10_daily_mean, v10_daily_mean ]
@@ -57,20 +56,20 @@ data_sources:
 
 preprocessing:
   fit_range: ["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
-  force_reprocess: true
+  force_reprocess: False  # If true data will be reprocessed each time the pipeline runs
 
 training:
   train_range: ["2018-01-01", "2020-12-31"] # The range of data exposed to the model for training
   val_range: ["2021-01-01", "2022-12-31"] # The range of data exposed for validation
-  date_subsample_factor: 20
-  n_epochs: 60
-  lr: 5.0e-5
-  patience: 15
-  internal_density: 250
-  n_context_points: 60
-  vary_n_context: true
-  min_n_context: 10
-  max_n_context: 200
+  date_subsample_factor: 20  # Every X days for sampling. The lower the value the higher the number of training and validation tasks
+  n_epochs: 60  # How many epochs the training loop will go for
+  lr: 5.0e-5  # The learning rate. This is the default
+  patience: 15  # Number of training iterations with no improvement before early exit of training
+  internal_density: 250  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+  n_context_points: 60  # The number of context points used for a training/validation task. Ignored if vary_n_context is False
+  vary_n_context: true  # Whether or not to vary the number of context sampling points for task training/validation
+  min_n_context: 10  # If vary_n_context is true, then the lowest possible random number of context points
+  max_n_context: 200  # If vary_n_context is true, then the highest possible random number of context points
 
 
 prediction:
