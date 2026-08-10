@@ -8,6 +8,40 @@ import yaml
 import shutil
 import os
 
+from utils.dates import dates_from_intervals
+
+
+def _normalize_ranges(x) -> list:
+    """
+    Normalize a date-range spec into a canonical list of (start, end) tuples.
+
+    Accepts:
+        ["2021-01-01", "2021-12-31"]                      -> [("2021-01-01", "2021-12-31")]
+        [["2018-01-01","2018-12-31"], ["2020-...","..."]] -> [("2018-01-01","2018-12-31"), (...)]
+        [("2021-01-01", "2021-12-31")]                    -> [("2021-01-01", "2021-12-31")]
+
+    Returns
+    -------
+    list[tuple[str, str]]
+    """
+    if x is None:
+        return []
+
+    # Nested form: first element is itself a list/tuple
+    if len(x) > 0 and isinstance(x[0], (list, tuple)):
+        intervals = [tuple(item) for item in x]
+    else:
+        # Flat form: a single [start, end]
+        intervals = [tuple(x)]
+
+    # Validate shape
+    for iv in intervals:
+        if len(iv) != 2:
+            raise ValueError(
+                f"Each date range interval must have exactly 2 elements "
+                f"(start, end). Got: {iv}"
+            )
+    return intervals
 
 @dataclass
 class PathsConfig:
@@ -54,14 +88,14 @@ class DataSourceEntry:
 
 @dataclass
 class PreprocessingConfig:
-    fit_range: tuple = ("2019-01-01", "2019-12-31")
+    fit_range: list = field(default_factory=lambda: [("2019-01-01", "2019-12-31")])
     force_reprocess: bool = False
 
 
 @dataclass
 class TrainingConfig:
-    train_range: tuple = ("2019-01-01", "2020-12-31")
-    val_range: tuple = ("2021-01-01", "2021-12-31")
+    train_range: list = field(default_factory=lambda: [("2019-01-01", "2020-12-31")])
+    val_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
     date_subsample_factor: int = 5
     n_epochs: int = 50
     lr: float = 5e-5
@@ -90,16 +124,17 @@ class PredictionConfig:
     n_context: int = None           # Override training n_context for prediction (optional)
     seed: int = 42
 
-    def get_dates(self, val_range: tuple) -> list:
-        """Resolve prediction dates from config options."""
+    def get_dates(self, val_range) -> list:
         import pandas as pd
         import numpy as np
 
         if self.dates:
             return pd.to_datetime(self.dates).normalize().tolist()
 
-        val_start, val_end = val_range
-        all_dates = pd.date_range(val_start, val_end, freq="D").normalize()
+        all_dates = dates_from_intervals(val_range, subsample_factor=1)
+
+        if len(all_dates) == 0:
+            return []
 
         if self.n_random:
             np.random.seed(self.seed)
@@ -109,15 +144,15 @@ class PredictionConfig:
         if self.every_n_days:
             return all_dates[::self.every_n_days].tolist()
 
-        # Default: 5 evenly spaced dates
-        return pd.date_range(val_start, val_end, periods=5).normalize().tolist()
+        # Default: 5 evenly spaced dates across the full span
+        return pd.date_range(all_dates.min(), all_dates.max(), periods=5).normalize().tolist()
 
 
 @dataclass
 class ActiveLearningConfig:
     name: str = "default"  # creates subfolder: active_learning/<name>/
 
-    eval_range: tuple = ("2021-01-01", "2021-12-31")
+    eval_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
     eval_subsample_factor: int = 14
 
     n_new_sensors: int = 5
@@ -179,39 +214,57 @@ class PipelineConfig:
     run: RunConfig = field(default_factory=RunConfig)
 
     def validate(self):
-        """Fail-fast validation of config before pipeline runs."""
-        from lakes import LAKE_BOUNDS  # or whatever your dict is called
+        from lakes import LAKE_BOUNDS
+        import pandas as pd
+        import warnings
 
-        # Check lake name
+        # Defensive: ensure canonical list-of-intervals form
+        self.preprocessing.fit_range = _normalize_ranges(self.preprocessing.fit_range)
+        self.training.train_range = _normalize_ranges(self.training.train_range)
+        self.training.val_range = _normalize_ranges(self.training.val_range)
+        self.active_learning.eval_range = _normalize_ranges(self.active_learning.eval_range)
+
+        # Lake name
         if self.lake not in LAKE_BOUNDS:
-            available = list(LAKE_BOUNDS.keys())
-            raise ValueError(f"Unknown lake '{self.lake}'. Available: {available}")
+            raise ValueError(f"Unknown lake '{self.lake}'. Available: {list(LAKE_BOUNDS.keys())}")
 
-        # Check data source paths exist
+        # Data source paths
         for name, source in self.data_sources.items():
             p = Path(source.path)
             if not p.exists():
                 raise FileNotFoundError(f"Data source '{name}' path not found: {p}")
 
-        # Check date range consistency
-        import pandas as pd
-        fit_start, fit_end = pd.Timestamp(self.preprocessing.fit_range[0]), pd.Timestamp(
-            self.preprocessing.fit_range[1])
-        train_start, train_end = pd.Timestamp(self.training.train_range[0]), pd.Timestamp(self.training.train_range[1])
-        val_start, val_end = pd.Timestamp(self.training.val_range[0]), pd.Timestamp(self.training.val_range[1])
+        # Per-interval date sanity
+        def _check_intervals(intervals, label):
+            spans = []
+            for start_s, end_s in intervals:
+                start, end = pd.Timestamp(start_s), pd.Timestamp(end_s)
+                if start > end:
+                    raise ValueError(f"{label} interval start {start} is after end {end}")
+                spans.append((start, end))
+            # Warn on overlapping intervals within the same set
+            spans_sorted = sorted(spans)
+            for (s1, e1), (s2, e2) in zip(spans_sorted, spans_sorted[1:]):
+                if s2 <= e1:
+                    warnings.warn(f"{label} has overlapping intervals: "
+                                  f"[{s1.date()},{e1.date()}] and [{s2.date()},{e2.date()}]")
+            return spans
 
-        if fit_start > fit_end:
-            raise ValueError(f"fit_range start {fit_start} is after end {fit_end}")
-        if train_start > train_end:
-            raise ValueError(f"train_range start {train_start} is after end {train_end}")
-        if val_start > val_end:
-            raise ValueError(f"val_range start {val_start} is after end {val_end}")
-        if val_start <= train_end:
-            import warnings
+        fit_spans = _check_intervals(self.preprocessing.fit_range, "fit_range")
+        train_spans = _check_intervals(self.training.train_range, "train_range")
+        val_spans = _check_intervals(self.training.val_range, "val_range")
+        _check_intervals(self.active_learning.eval_range, "eval_range")
+
+        # Train/val leakage check: warn if any val interval starts before max train end
+        max_train_end = max(e for _, e in train_spans)
+        min_val_start = min(s for s, _ in val_spans)
+        if min_val_start <= max_train_end:
             warnings.warn(
-                f"Validation range overlaps with training range (val starts {val_start}, train ends {train_end})")
+                f"Validation may overlap training (earliest val start {min_val_start.date()} "
+                f"<= latest train end {max_train_end.date()})"
+            )
 
-        # Check output root is writable
+        # Output root writable
         output_root = Path(self.paths.output_root)
         output_root.mkdir(parents=True, exist_ok=True)
         if not os.access(output_root, os.W_OK):
@@ -241,9 +294,16 @@ def load_config(config_path: str) -> PipelineConfig:
         data_sources[name] = DataSourceEntry(**entry)
 
     preprocessing = PreprocessingConfig(**raw.get("preprocessing", {}))
+    preprocessing.fit_range = _normalize_ranges(preprocessing.fit_range)
+
     training = TrainingConfig(**raw.get("training", {}))
+    training.train_range = _normalize_ranges(training.train_range)
+    training.val_range = _normalize_ranges(training.val_range)
+
     prediction = PredictionConfig(**raw.get("prediction", {}))
+
     active_learning = ActiveLearningConfig(**raw.get("active_learning", {}))
+    active_learning.eval_range = _normalize_ranges(active_learning.eval_range)
 
     return PipelineConfig(
         lake=raw.get("lake", "erie"),

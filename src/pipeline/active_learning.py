@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-
+from utils.dates import dates_from_intervals
 from pipeline.model import load_trained_model
 from pipeline.task_builder import gen_tasks
 from pipeline.plotting import _finish_plot
@@ -540,7 +540,7 @@ def resolve_context_points(config, bundle) -> np.ndarray:
 
 def _generate_random_context(al_cfg, bundle) -> np.ndarray:
     """Generate random lake points and optionally save them."""
-    from ..utils import generate_random_coordinates
+    from utils.coordinates import generate_random_coordinates
 
     np.random.seed(al_cfg.context_seed)
 
@@ -645,11 +645,8 @@ def save_context_points(
 # ---------------------------------------------------------------------
 
 def make_active_learning_dates(config):
-    """Generate active learning eval dates from config."""
     al_cfg = config.active_learning
-    dates = pd.date_range(al_cfg.eval_range[0], al_cfg.eval_range[1], freq="D")
-    dates = dates[::al_cfg.eval_subsample_factor]
-    return pd.to_datetime(dates).normalize()
+    return dates_from_intervals(al_cfg.eval_range, al_cfg.eval_subsample_factor)
 
 
 # ---------------------------------------------------------------------

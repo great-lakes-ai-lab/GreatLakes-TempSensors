@@ -111,11 +111,12 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 
 if __name__ == "__main__":
 
-    # import sys
-    #
-    # sys.argv = [
-    #     "run_greatlakes_deepsensor.py",
-    #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run01_erie_full/config_used.yaml",
-    #     "--stage", "active_learning",
-    # ]
+    import sys
+
+    sys.argv = [
+        "run_greatlakes_deepsensor.py",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run01_erie_full/config_used.yaml",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_new_run1.yaml",
+        "--stage", "train",
+    ]
     main()

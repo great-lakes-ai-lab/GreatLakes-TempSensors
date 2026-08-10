@@ -269,6 +269,33 @@ def _get_lakemask_sampling(standardized: dict, config: PipelineConfig) -> xr.Dat
 # DataProcessor fitting
 # -----------------------------------------------------------------------
 
+def _select_fit_slices(ds: xr.Dataset, fit_intervals: list) -> xr.Dataset:
+    """
+    Concatenate time slices from multiple fit intervals along the time dim.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        A temporal dataset (must have a 'time' dim).
+    fit_intervals : list[tuple[str, str]]
+        Canonical list of (start, end) date-string pairs.
+
+    Returns
+    -------
+    xr.Dataset
+        Concatenation of ds.sel(time=slice(start, end)) over all intervals.
+    """
+    slices = [ds.sel(time=slice(s, e)) for s, e in fit_intervals]
+    slices = [s for s in slices if s.sizes.get("time", 0) > 0]
+    if not slices:
+        raise ValueError(
+            f"No data found in any fit_range interval: {fit_intervals}"
+        )
+    result = xr.concat(slices, dim="time") if len(slices) > 1 else slices[0]
+    print(f"  fit slices: {len(slices)} interval(s) -> {result.sizes.get('time', 0)} time steps")
+    return result
+
+
 def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
     """
     Fit DataProcessor and process all datasets, ordered by role.
@@ -282,7 +309,6 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
     Returns (data_processor, processed_datasets_dict).
     """
     data_processor = DataProcessor(x1_name="lat", x2_name="lon")
-    fit_start, fit_end = config.preprocessing.fit_range
     processed = {}
 
     # --- 1. Target first (defines spatial bounds) ---
@@ -293,14 +319,14 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
 
         ds = standardized[name]
         if "time" in ds.dims:
-            _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
+            _ = data_processor(_select_fit_slices(ds, config.preprocessing.fit_range))
             processed[name] = data_processor(ds)
 
             # --- 2. Anomalies (if computed) ---
             anom_key = f"{name}_anom"
             if source.use_anomalies and anom_key in standardized:
                 _ = data_processor(
-                    standardized[anom_key].sel(time=slice(fit_start, fit_end))
+                    _select_fit_slices(standardized[anom_key], config.preprocessing.fit_range)
                 )
                 processed[anom_key] = data_processor(standardized[anom_key])
 
@@ -318,7 +344,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
 
         ds = standardized[name]
         if "time" in ds.dims:
-            _ = data_processor(ds.sel(time=slice(fit_start, fit_end)))
+            _ = data_processor(_select_fit_slices(ds, config.preprocessing.fit_range))
             processed[name] = data_processor(ds)
 
     # --- 4. Static datasets (min_max) ---
