@@ -84,6 +84,7 @@ class DataSourceEntry:
     use_anomalies: bool = False
     sampling: str = "all"                   # all, random_lake_points, or integer
     coarsen_factor: Optional[int] = None    # per-source coarsening
+    fill_values: Optional[list] = None  # NEW: None → default; [] → none; [..] → explicit
 
 
 @dataclass

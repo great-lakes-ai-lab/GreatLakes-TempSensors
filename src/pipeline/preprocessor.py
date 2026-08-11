@@ -18,6 +18,30 @@ from pipeline.config import PipelineConfig
 
 
 # -----------------------------------------------------------------------
+# Fill value handling
+# -----------------------------------------------------------------------
+# Default sentinel/fill values applied when a source doesn't declare fill_values.
+# Verified: all current sources encode land/fill as NaN or a meaningful 0.
+# The former global -1 rule NaN'd 44 legitimate ERA5 values (t2m/u10/v10);
+# -99999 matched nothing. Default is now NO replacement.
+_DEFAULT_FILL_VALUES = []
+
+
+def _resolve_fill_values(source_entry) -> list:
+    """
+    Determine which sentinel/fill values to NaN-out for a source.
+
+    Semantics:
+        fill_values is None -> _DEFAULT_FILL_VALUES (empty)
+        fill_values == []   -> no replacement
+        fill_values == [..] -> use exactly those
+    """
+    fv = getattr(source_entry, "fill_values", None)
+    if fv is None:
+        return list(_DEFAULT_FILL_VALUES)
+    return list(fv)
+
+# -----------------------------------------------------------------------
 # Public entry point
 # -----------------------------------------------------------------------
 
@@ -159,9 +183,10 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
         if "time" in ds.coords:
             ds = standardize_dates(ds)
 
-        # Replace common sentinel values with NaN
-        ds = ds.where(ds != -1, np.nan)
-        ds = ds.where(ds != -99999, np.nan)
+        # Replace declared sentinel/fill values with NaN (per-source, opt-in)
+        fill_values = _resolve_fill_values(source_entry)
+        for fv in fill_values:
+            ds = ds.where(ds != fv, np.nan)
 
         standardized[name] = ds
 

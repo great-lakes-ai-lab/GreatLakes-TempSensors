@@ -167,6 +167,7 @@ test-results/
 
 # Ignore all config yamls except the tracked ones
 src/config/*.yaml
-!src/config/config_template.yaml
+!src/config/config_template_local.yaml
+!src/config/config_template_HPC.yaml
 !src/config/config_test_HPC.yaml
 !src/config/config_test_local.yaml

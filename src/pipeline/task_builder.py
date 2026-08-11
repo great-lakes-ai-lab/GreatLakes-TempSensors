@@ -155,7 +155,14 @@ def gen_tasks(
         tasks.append(task)
 
     if skipped:
+        skipped_dates = pd.to_datetime([d for d, _ in skipped])
         print(f"Skipped {len(skipped)} dates due to errors.")
+        print(f"    Skip date range: {skipped_dates.min().date()} to {skipped_dates.max().date()}")
+        # Optional: show first few
+        for d, msg in skipped[:5]:
+            print(f"    {d}: {msg}")
+        if len(skipped) > 5:
+            print(f"    ... and {len(skipped) - 5} more")
 
     return tasks
 

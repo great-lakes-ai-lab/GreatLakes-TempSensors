@@ -16,18 +16,21 @@ data_sources:
     use_anomalies: true  # This will trigger the seasonalcyle processer and compute the anomalies rather than direct values
     sampling: random_lake_points  # random_lake_points: will use the randomly generated N context points, all: uses all points
     variable: sst
+    fill_values: []
   era5:
     path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
     format: zarr
     variables: [t2m_daily_mean, ssr_daily_sum, u10_daily_mean, v10_daily_mean ]
     role: context
     sampling: all
+    fill_values: []
   ice_concentration:
     path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/ice_concentration.zarr
     format: zarr
     variable: ice_concentration
     role: context
     sampling: all
+    fill_values: []
   bathy:
     path: ~/dev/deepsensor_projects/data/bathy/gl_bathy_depth_3arcsec_clean.nc
     format: netcdf
@@ -35,24 +38,28 @@ data_sources:
     role: [context, aux_at_targets]
     sampling: all
     coarsen_factor: 10
+    fill_values: []
   lake_mask:
       path: ~/dev/deepsensor_projects/data/bathy/gl_landmask_3arcsec.nc
       format: netcdf
       variable: mask
       role: mask
       coarsen_factor: 25
+      fill_values: []
   dist_to_land:
     path: ~/dev/deepsensor_projects/data/bathy/gl_dist_to_land_3arcsec.nc
     format: netcdf
     variable: dist_to_land
     role: [context, aux_at_targets]
     coarsen_factor: 10
+    fill_values: []
   core_depth:
     path: ~/dev/deepsensor_projects/data/bathy/gl_core_depth_3arcsec.nc
     format: netcdf
     variable: core_depth
     role: [context, aux_at_targets]
     coarsen_factor: 10
+    fill_values: []
 
 preprocessing:
   fit_range: ["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data

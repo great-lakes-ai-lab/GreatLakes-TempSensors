@@ -17,18 +17,21 @@ data_sources:
     use_anomalies: true
     sampling: random_lake_points
     variable: sst
+    fill_values: []
   era5:
     path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/greatlakes_era5_1995_2025.zarr
     format: zarr
     variables: [t2m_daily_mean]
     role: context
     sampling: all
+    fill_values: []
 #  ice_concentration:
 #    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/ice_concentration.zarr
 #    format: zarr
 #    variable: ice_concentration
 #    role: context
 #    sampling: all
+#    fill_values: []
   bathy:
     path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_bathy_depth_3arcsec_clean.nc
     format: netcdf
@@ -36,24 +39,28 @@ data_sources:
     role: [context, aux_at_targets]
     sampling: all
     coarsen_factor: 10
+    fill_values: []
   lake_mask:
       path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_landmask_3arcsec.nc
       format: netcdf
       variable: mask
       role: mask
       coarsen_factor: 25
+      fill_values: []
 #  dist_to_land:
 #    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_dist_to_land_3arcsec.nc
 #    format: netcdf
 #    variable: dist_to_land
 #    role: [context, aux_at_targets]
 #    coarsen_factor: 10
+#    fill_values: []
 #  core_depth:
 #    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/
 #    format: netcdf
 #    variable: core_depth
 #    role: [context, aux_at_targets]
 #    coarsen_factor: 10
+#    fill_values: []
 
 preprocessing:
   fit_range: ["2010-01-01", "2011-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
