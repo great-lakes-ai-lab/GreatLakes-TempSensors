@@ -83,6 +83,7 @@ def save_trained_model(model: ConvNP, config: PipelineConfig):
 
 
 def load_trained_model(config: PipelineConfig, bundle: dict, task_loader) -> ConvNP:
+    print("\nNow loading trained model from disk...")
     model_dir = Path(config.paths.model_dir)
 
     model = load_convnp_model(

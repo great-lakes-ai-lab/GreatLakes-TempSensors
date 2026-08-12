@@ -67,10 +67,16 @@ def main():
             return
 
     # 6. Build TaskLoader (needed for train and predict)
+    print("\n" + "=" * 60)
+    print("BUILDING TASKS")
+    print("=" * 60)
     tl_config = build_task_loader(config, bundle)
 
     # 7. Train
     if "train" in stages:
+        print("\n" + "=" * 60)
+        print("STAGE: TRAINING")
+        print("=" * 60)
         train_dates, val_dates = make_train_val_dates(config)
         print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
 
@@ -84,11 +90,17 @@ def main():
 
     # 8. Predict
     if "predict" in stages:
+        print("\n" + "=" * 60)
+        print("STAGE: PREDICTION")
+        print("=" * 60)
         from pipeline.predict import run_predictions
         run_predictions(config, bundle, tl_config)
 
     # 9. Active learning
     if "active_learning" in stages:
+        print("\n" + "=" * 60)
+        print("STAGE: ACTIVE LEARNING")
+        print("=" * 60)
         from pipeline.active_learning import run_active_learning
         run_active_learning(config, bundle, tl_config)
 
@@ -97,6 +109,9 @@ def main():
 
 def run_preprocessing(config: PipelineConfig) -> dict:
     """Load from cache if available, otherwise load raw and preprocess."""
+    print("\n" + "=" * 60)
+    print("STAGE: PREPROCESSING")
+    print("=" * 60)
     processed_dir = Path(config.paths.processed_dir)
     dp_dir = Path(config.paths.data_processor_dir)
 
@@ -115,8 +130,7 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run01_erie_full/config_used.yaml",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_new_run1.yaml",
-        "--stage", "train",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_run_local.yaml",
+        "--stage", "all",
     ]
     main()

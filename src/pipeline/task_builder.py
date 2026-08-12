@@ -21,6 +21,7 @@ class TaskLoaderConfig:
 
 
 def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoaderConfig:
+    print("\nNow building TaskLoader...")
     context = []
     context_sampling_map = []
     aux_at_targets_list = []
@@ -52,6 +53,10 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoaderConfig:
         aux_at_targets = xr.merge(aux_at_targets_list)
     else:
         aux_at_targets = None
+
+    print(f"  Context sets ({len(context)}): sampling={context_sampling_map}")
+    print(f"  Target: {list(target_ds.data_vars) if target_ds is not None else None}")
+    print(f"  Aux-at-targets: {list(aux_at_targets.data_vars) if aux_at_targets is not None else None}")
 
     task_loader = TaskLoader(
         context=context,
@@ -102,6 +107,7 @@ def gen_tasks(
     -------
     list of Task objects
     """
+
     tc = config.training
     n_context = n_context if n_context is not None else tc.n_context_points
     vary_n_context = vary_n_context if vary_n_context is not None else tc.vary_n_context
@@ -110,6 +116,9 @@ def gen_tasks(
 
     if seed is not None:
         np.random.seed(seed)
+
+    print(f"\nNow generating {len(dates)} tasks "
+          f"(n_context={n_context}, vary={vary_n_context}, seed={seed})...")
 
     tasks = []
     skipped = []
@@ -171,6 +180,9 @@ def make_train_val_dates(config: PipelineConfig) -> tuple:
     tc = config.training
     train_dates = dates_from_intervals(tc.train_range, tc.date_subsample_factor)
     val_dates   = dates_from_intervals(tc.val_range,   tc.date_subsample_factor)
+    print(f"\nNow resolving train/val dates...")
+    print(f"  train_range intervals: {tc.train_range} → {len(train_dates)} dates")
+    print(f"  val_range   intervals: {tc.val_range} → {len(val_dates)} dates")
     return train_dates, val_dates
 
 

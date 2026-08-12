@@ -946,6 +946,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
     For parallel acquisition functions, X_s == X_t (same grid).
     For sequential acquisition functions, X_s can be coarser than X_t.
     """
+    print("\nNow building search/target grids and masks...")
     al_cfg = config.active_learning
 
     # Start from the full pre-DP target grid
@@ -992,6 +993,8 @@ def build_grids_and_masks(bundle, config, acq_fn):
         else:
             search_grid = base_grid
             search_mask = base_mask
+
+        
 
         return {
             "search_grid": search_grid,

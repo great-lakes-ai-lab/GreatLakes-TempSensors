@@ -90,6 +90,7 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     seasonal_processor = None
     for name, source in config.data_sources.items():
         if source.use_anomalies and name in standardized:
+            print(f"\nNow computing anomalies for '{name}' (removing monthly climatology)...")
             seasonal_dir = Path(config.paths.seasonal_dir)
             anom_ds, seasonal_processor = _compute_anomalies(
                 standardized[name], seasonal_dir
@@ -155,9 +156,10 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
         "Band1": "bathymetry",
     }
 
+    print("\nNow standardizing coordinates and dates...")
     for name, ds in raw_datasets.items():
         source_entry = config.data_sources[name]
-        print(f'standardizing {name}')
+        print(f"  standardizing {name}")
         # Rename time if needed (e.g., "date" -> "time")
         if "date" in ds.dims or "date" in ds.coords:
             ds = ds.rename({"date": "time"})
@@ -185,6 +187,8 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
 
         # Replace declared sentinel/fill values with NaN (per-source, opt-in)
         fill_values = _resolve_fill_values(source_entry)
+        if fill_values:
+            print(f"    {name}: NaN-ing fill values {fill_values}")
         for fv in fill_values:
             ds = ds.where(ds != fv, np.nan)
 
@@ -204,6 +208,7 @@ def _coarsen_sources(raw_datasets: dict, config: PipelineConfig) -> dict:
     Only coarsens sources that have a coarsen_factor set.
     Returns the dict with coarsened versions replacing originals.
     """
+    print("\nNow applying per-source coarsening...")
     coarsened = {}
 
     for name, ds in raw_datasets.items():
@@ -333,6 +338,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
 
     Returns (data_processor, processed_datasets_dict).
     """
+    print("\nNow fitting DataProcessor and normalizing datasets...")
     data_processor = DataProcessor(x1_name="lat", x2_name="lon")
     processed = {}
 
@@ -341,6 +347,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
         roles = source.role if isinstance(source.role, list) else [source.role]
         if "target" not in roles:
             continue
+        print(f"  [target]  fitting + normalizing: {name}")
 
         ds = standardized[name]
         if "time" in ds.dims:
@@ -360,6 +367,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
         if name in processed:
             continue
 
+        print(f"  [context] normalizing: {name}")
         roles = source.role if isinstance(source.role, list) else [source.role]
 
         # Skip mask and pure aux_at_targets (they're static)
@@ -377,6 +385,7 @@ def _fit_and_process(config: PipelineConfig, standardized: dict) -> tuple:
         if name in processed:
             continue
 
+        print(f"  [static]  normalizing (min_max): {name}")
         ds = standardized[name]
         if "time" not in ds.dims:
             _ = data_processor(ds, method="min_max")
@@ -504,6 +513,7 @@ def _clean_encoding(ds: xr.Dataset) -> xr.Dataset:
 
 def _save_cache(config: PipelineConfig, bundle: dict):
     """Save processed datasets and DataProcessor to disk."""
+    print("\nNow saving processed cache to disk...")
     processed_dir = Path(config.paths.processed_dir)
     dp_dir = Path(config.paths.data_processor_dir)
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -536,11 +546,13 @@ def _save_cache(config: PipelineConfig, bundle: dict):
     with open(processed_dir / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=4)
 
+    print(f"  Saved {len(saved_datasets)} datasets: {saved_datasets}")
     print(f"Processed cache saved to: {processed_dir}")
 
 
 def load_processed_cache(config: PipelineConfig) -> dict:
     """Load previously saved processed bundle from disk."""
+    print("\nNow loading processed cache from disk...")
     processed_dir = Path(config.paths.processed_dir)
     dp_dir = Path(config.paths.data_processor_dir)
     seasonal_dir = Path(config.paths.seasonal_dir)
@@ -578,4 +590,9 @@ def load_processed_cache(config: PipelineConfig) -> dict:
                 str(nc_files[-1]), str(meta_files[-1])
             )
 
+    print(f"  Loaded {len(dataset_names)} cached datasets")
+    if bundle["seasonal_processor"] is not None:
+        print(f"  Loaded seasonal processor (id={bundle['seasonal_processor'].metadata.get('id', '?')})")
+    else:
+        print("  No seasonal processor found in cache")
     return bundle

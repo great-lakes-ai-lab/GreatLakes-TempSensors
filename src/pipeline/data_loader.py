@@ -7,13 +7,20 @@ from lakes import LAKE_BOUNDS
 
 
 def load_raw_datasets(config: PipelineConfig) -> dict:
-    """Load all datasets specified in config, clipped to lake bounding box."""
+    print("\nNow loading raw datasets...")
     bbox = LAKE_BOUNDS.get(config.lake)
+    print(f"  Lake: {config.lake}, bbox: lat{bbox['lat']} lon{bbox['lon']}")
     datasets = {}
 
     for name, source in config.data_sources.items():
-        print(f"  Loading: {name}")
         ds = _load_single(source, bbox)
+        # Report temporal coverage — catches the "source ends in 2023" issue early
+        if "time" in ds.coords:
+            t0 = str(ds.time.values.min())[:10]
+            t1 = str(ds.time.values.max())[:10]
+            print(f"  Loaded {name:<18} | vars={list(ds.data_vars)} | time: {t0} → {t1}")
+        else:
+            print(f"  Loaded {name:<18} | vars={list(ds.data_vars)} | (static)")
         datasets[name] = ds
 
     return datasets
