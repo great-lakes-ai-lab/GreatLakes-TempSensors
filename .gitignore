@@ -171,3 +171,4 @@ src/config/*.yaml
 !src/config/config_template_HPC.yaml
 !src/config/config_test_HPC.yaml
 !src/config/config_test_local.yaml
+!src/config/al_config_template.yaml

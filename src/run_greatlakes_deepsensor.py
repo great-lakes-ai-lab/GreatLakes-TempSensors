@@ -3,8 +3,9 @@
 
 import argparse
 from pathlib import Path
+import yaml
 
-from pipeline.config import load_config, PipelineConfig, copy_config_to_run_dir
+from pipeline.config import load_config, PipelineConfig, copy_config_to_run_dir, load_al_config
 from pipeline.data_loader import load_raw_datasets
 from pipeline.preprocessor import load_processed_cache, _cache_exists, preprocess_all
 from pipeline.task_builder import build_task_loader, gen_tasks, make_train_val_dates
@@ -28,15 +29,37 @@ def main():
 
     args = parser.parse_args()
 
-    # 1. Load and validate config
-    config = load_config(args.config)
-    config.validate()
+    # 1. Load config (auto-detect AL overlay vs. full pipeline config)
+    with open(args.config) as f:
+        raw_peek = yaml.safe_load(f)
+
+    is_al_config = "run_ref" in raw_peek
+
+    if is_al_config:
+        config = load_al_config(args.config)  # already validated internally
+    else:
+        config = load_config(args.config)
+        config.validate()
 
     # 2. Parse stages
     if args.stage == "all":
-        stages = ["preprocess", "train", "predict"]
+        if is_al_config:
+            # An AL overlay config only makes sense for AL-related stages
+            stages = ["active_learning"]  # (+ "skill_curve" once added)
+        else:
+            stages = ["preprocess", "train", "predict"]
     else:
         stages = [s.strip() for s in args.stage.split(",")]
+
+    # ── Active learning stage with train/predict config ──
+    al_only_stages = {"active_learning", "skill_curve"}
+    if not is_al_config and any(s in al_only_stages for s in stages):
+        raise ValueError(
+            f"Stage(s) {sorted(set(stages) & al_only_stages)} require an active-learning "
+            f" config (one with a top-level 'run_ref'). "
+            f"You passed a full-pipeline config. See src/config/al_config_template.yaml."
+            f"To run active learing you must first have a trained model and use the AL template to point at the run dir"
+        )
 
     # Only copy config to run dir if we're modifying outputs
     read_only_stages = {"diagnostics", "predict", "active_learning"}
@@ -130,8 +153,8 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_run_local.yaml",
-        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/debug_run_01/config_used.yaml",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/debug_run_01/active_learning/al_config_debug.yaml",
         "--stage", "active_learning",
     ]
     main()

@@ -152,6 +152,7 @@ class PredictionConfig:
 @dataclass
 class ActiveLearningConfig:
     name: str = "default"  # creates subfolder: active_learning/<name>/
+    notes: str = ""
 
     eval_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
     eval_subsample_factor: int = 14
@@ -317,6 +318,120 @@ def load_config(config_path: str) -> PipelineConfig:
         active_learning=active_learning,
         run=run_cfg,
     )
+
+
+def load_al_config(al_config_path: str) -> PipelineConfig:
+    """
+    Load an Active Learning overlay config.
+
+    Inherits data_sources / lake / preprocessing / training from the referenced
+    trained-model run (run_ref), applies path-only overrides, overlays the
+    active_learning section, and enforces that no structural field was changed.
+
+    Guardrails:
+      - Structural invariant: roles/variables/coarsening/anomalies/source names
+        must match run_ref exactly (hard error otherwise).
+      - force_reprocess is hard-set False (an AL run must never rebuild the
+        training run's processed cache).
+      - Model artifacts are verified to exist at the (re-resolved) paths.
+    """
+    al_path = Path(al_config_path).expanduser()
+    with open(al_path) as f:
+        al_raw = yaml.safe_load(f)
+
+    if "run_ref" not in al_raw:
+        raise ValueError("AL config must specify 'run_ref' (path to a trained run dir).")
+
+    run_ref = Path(al_raw["run_ref"]).expanduser()
+    base_cfg_path = run_ref / "config_used.yaml"
+    if not base_cfg_path.exists():
+        raise FileNotFoundError(
+            f"run_ref config not found: {base_cfg_path}. "
+            f"AL config must reference a completed training run "
+            f"(one containing config_used.yaml + model/)."
+        )
+
+    # 1. Base config from the trained-model run (full provenance)
+    config = load_config(str(base_cfg_path))
+
+    # 2. Structural signature BEFORE overrides (for the invariant check)
+    def _structural_sig(cfg):
+        return {
+            name: (
+                tuple(s.role) if isinstance(s.role, list) else (s.role,),
+                s.variable,
+                tuple(s.variables) if s.variables else None,
+                s.coarsen_factor,
+                bool(s.use_anomalies),
+            )
+            for name, s in cfg.data_sources.items()
+        }
+    sig_before = _structural_sig(config)
+
+    # 3. Path re-resolution via output_root (Decision 1: option a)
+    paths_override = al_raw.get("paths_override") or {}
+    new_root = paths_override.get("output_root")
+    if new_root:
+        config.paths.output_root = str(Path(new_root).expanduser())
+        config.paths.resolve(config.run.name)  # re-derive all subpaths consistently
+
+    # 4. Per-source PATH-ONLY overrides
+    for name, ov in (al_raw.get("data_source_overrides") or {}).items():
+        if name not in config.data_sources:
+            raise ValueError(
+                f"data_source_overrides references unknown source '{name}'. "
+                f"Available: {list(config.data_sources.keys())}"
+            )
+        for field_name, value in ov.items():
+            if field_name != "path":
+                raise ValueError(
+                    f"data_source_overrides['{name}'] may only override 'path', "
+                    f"not '{field_name}' (structural fields are locked to run_ref)."
+                )
+            config.data_sources[name].path = str(Path(value).expanduser())
+
+    # 5. Structural invariant (Decision 2: hard error)
+    sig_after = _structural_sig(config)
+    if sig_before != sig_after:
+        # Report which sources changed, for a helpful message
+        changed = {k for k in sig_before if sig_before[k] != sig_after.get(k)}
+        changed |= set(sig_after) ^ set(sig_before)
+        raise ValueError(
+            f"AL overrides changed data-source structure for: {sorted(changed)}. "
+            f"Roles/variables/coarsening/anomalies/source-set must match run_ref "
+            f"exactly (only 'path' may be overridden). This would invalidate the "
+            f"trained model."
+        )
+
+    # 6. Overlay the active_learning section (full replacement)
+    config.active_learning = ActiveLearningConfig(**al_raw.get("active_learning", {}))
+    config.active_learning.eval_range = _normalize_ranges(config.active_learning.eval_range)
+
+    # 7. Guardrail: never reprocess the training run's cache (Decision 4)
+    config.preprocessing.force_reprocess = False
+
+    # 8. Verify model artifacts exist at (re-resolved) paths (Decision 3)
+    model_dir = Path(config.paths.model_dir)
+    required = [
+        model_dir / "model.pt",
+        model_dir / "model_config.json",
+        model_dir / "data_processor",
+    ]
+    missing = [str(p) for p in required if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Trained model artifacts not found under the resolved model_dir "
+            f"({model_dir}). Missing: {missing}. "
+            f"Check run_ref and paths_override.output_root."
+        )
+
+    # 9. Re-validate (paths exist at new locations, dates sane, writability)
+    config.validate()
+
+    # Stash the AL config source path so run_active_learning can archive it (Decision 5)
+    config._al_config_source_path = str(al_path)
+
+    return config
 
 def copy_config_to_run_dir(config, config_path):
     run_dir = Path(config.paths.run_dir)

@@ -204,6 +204,16 @@ def _save_al_config(config, output_dir: Path):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    import shutil
+    # Archive the verbatim AL YAML alongside the parsed al_config.json
+    src_path = getattr(config, "_al_config_source_path", None)
+    if src_path:
+        try:
+            shutil.copy2(src_path, output_dir / "al_config_used.yaml")
+            print(f"  AL config (verbatim) archived: {output_dir / 'al_config_used.yaml'}")
+        except shutil.SameFileError:
+            pass
+
     # Save AL-specific config as JSON
     al_cfg = config.active_learning
     al_dict = {

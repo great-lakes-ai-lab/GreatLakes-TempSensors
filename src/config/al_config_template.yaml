@@ -1,0 +1,98 @@
+# src/config/al_config_template.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Active Learning experiment config (thin overlay).
+#
+# Inherits data_sources / lake / preprocessing / training from the referenced
+# trained-model run's config_used.yaml, and adds ONLY the AL-specific settings.
+# This guarantees AL is always evaluated against a structurally-consistent model.
+#
+# Structural fields (roles, variables, coarsening, anomaly flags, source
+# ordering) are LOCKED to run_ref and cannot be changed here. Only file
+# locations (paths) and output_root may be overridden — e.g. when a run trained
+# on HPC is copied to a local machine.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Path to the training run directory (must contain config_used.yaml + model/).
+run_ref: ~/dev/deepsensor_projects/runs/run04_michigan
+
+# Path re-resolution for HPC → local moves. Point output_root at where the runs
+# now live; all subpaths (model_dir, data_processor_dir, etc.) are re-derived
+# under output_root / <run.name>. Omit to inherit run_ref's paths unchanged.
+paths_override:
+  output_root: ~/dev/deepsensor_projects/runs/
+
+# Per-source PATH overrides (path-only). Only list sources whose file locations
+# differ on this machine. Attempting to override any non-path field, or an
+# unknown source, raises an error.
+data_source_overrides: {}
+#  sst:
+#    path: /Users/jagraha/dev/deepsensor_projects/data/temporal_inputs/glsea_sst.zarr
+#  era5:
+#    path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
+
+# ── Active learning experiment (same schema as the main config's block) ──────
+active_learning:
+  name: template
+  notes: "the template with defaults"
+
+  eval_range: [["2021-06-01", "2022-08-31"]]
+  eval_subsample_factor: 15
+
+  n_new_sensors: 3
+
+  # Sequential: mean_stddev, mean_variance, mean_marginal_entropy, joint_entropy,
+  #             p_norm_stddev, oracle_* | Parallel: stddev, context_dist, ei, random
+  acquisition_function: stddev
+  acquisition_fn_p: 2.0
+  acquisition_fn_seed: 42
+
+  # Context construction
+  context_source: random            # "random", "geojson" (buoy set), "buoy" (NYI)
+  n_context: 8
+  context_seed: 42
+  save_context_points: true
+  context_geojson_path:  /Users/jagraha/dev/deepsensor_projects/data/buoy/pretend_locations/actual_erie_mt_1200obs.geojson
+
+
+  # Not sure what these are but they are the defaults into the greedy algorithm
+  context_set_idx: 0
+  target_set_idx: 0
+
+  # GreedyAlgorithm options
+  model_infill_method: mean
+  diff: true                          # auto-ignored (with warning) for parallel fns
+  progress_bar: true
+
+  # Grid controls (parallel fns: target_coarsen ignored, candidate used for both)
+  candidate_coarsen_factor: 1
+  target_coarsen_factor: 1
+
+  # Placement constraints
+  min_dist_between_sensors_km: 20.0
+  existing_sensors_path: null
+
+  # Outputs
+  save_acquisition_surface: true
+  plot_results: true
+
+
+  # diff: For SEQUENTIAL acquisition functions only, report the *change* in the
+  #   acquisition metric caused by adding a candidate sensor, i.e.
+  #   acquisition_fn(task_with_new) - acquisition_fn(task), rather than the
+  #   absolute post-placement score.
+  #
+  #   Why True is a sensible default for sensor placement:
+  #     - Isolates the MARGINAL value of a candidate location (e.g. "how much
+  #       does a buoy here reduce field uncertainty?") instead of conflating it
+  #       with the baseline field uncertainty. Produces a more interpretable
+  #       acquisition surface and aligns with Andersson et al. (2023),
+  #       https://doi.org/10.1017/eds.2023.22.
+  #     - Note: usually selects the SAME points as diff=False (subtracting a
+  #       per-iteration baseline doesn't move the argmin/argmax); the benefit is
+  #       interpretability/comparability, not different placements.
+  #
+  #   PARALLEL acquisition functions (stddev, context_dist, expected_improvement,
+  #   random): diff does NOT apply. These score all candidates in a single pass
+  #   (they set X_t = X_s internally) and have no per-point "before" baseline to
+  #   difference against. If diff=True is set with a parallel function, it is
+  #   automatically ignored (with a warning) and diff=False is used.
