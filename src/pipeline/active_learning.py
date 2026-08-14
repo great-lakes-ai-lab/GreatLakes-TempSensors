@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
+from deepsensor.active_learning import AcquisitionFunction, AcquisitionFunctionParallel
 
 from utils.dates import dates_from_intervals
 from pipeline.model import load_trained_model
@@ -76,6 +77,21 @@ def run_active_learning(config, bundle, tl_config):
         target_set_idx=al_cfg.target_set_idx,
     )
 
+    effective_diff = al_cfg.diff
+    if isinstance(acquisition_fn, AcquisitionFunctionParallel):
+        if al_cfg.diff:
+            import warnings
+            warnings.warn(
+                f"diff=True has no effect for parallel acquisition function "
+                f"'{al_cfg.acquisition_function}' (parallel functions score all "
+                f"candidates in one pass with no per-point baseline). "
+                f"Proceeding with diff=False.",
+                UserWarning,
+                stacklevel=2,
+            )
+        effective_diff = False
+
+
     # 6. Build grids and masks
     grids = build_grids_and_masks(bundle, config, acquisition_fn)
 
@@ -96,10 +112,11 @@ def run_active_learning(config, bundle, tl_config):
             min_dist_km=al_cfg.min_dist_between_sensors_km,
         )
 
-    # For parallel acquisition functions, enforce X_s == X_t constraint
-    if acquisition_fn._is_parallel:
-        target_grid = search_grid
-        target_mask = search_mask
+    n_valid_candidates = int(search_mask.sum())
+    assert al_cfg.n_new_sensors < n_valid_candidates, (
+        f"n_new_sensors ({al_cfg.n_new_sensors}) >= valid masked candidates "
+        f"({n_valid_candidates}). Reduce n_new_sensors or use a finer search grid."
+    )
 
     # 8. Run GreedyAlgorithm
     greedy = GreedyAlgorithm(
@@ -121,7 +138,7 @@ def run_active_learning(config, bundle, tl_config):
     X_new_df, acquisition_fn_ds = greedy(
         acquisition_fn,
         tasks,
-        diff=al_cfg.diff,
+        diff=effective_diff,
     )
 
     # 9. Post-processing: enforce minimum distance
@@ -161,6 +178,8 @@ def run_active_learning(config, bundle, tl_config):
             config,
             output_dir,
             acquisition_name=al_cfg.acquisition_function,
+            x1_name=get_x1_name(model),
+            x2_name=get_x2_name(model),
         )
 
     print("\nActive learning complete.")
@@ -688,6 +707,8 @@ def build_acquisition_function(name: str, model, **kwargs):
         - Stddev, ContextDist, ExpectedImprovement, Random
     """
     from deepsensor.active_learning.acquisition_fns import (
+        AcquisitionFunctionParallel,
+        AcquisitionFunctionOracle,
         MeanStddev,
         Stddev,
         MeanVariance,
@@ -714,12 +735,8 @@ def build_acquisition_function(name: str, model, **kwargs):
     # Normalize name: lowercase, replace hyphens with underscores
     name_clean = name.lower().strip().replace("-", "_")
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Mapping: config name → (class, requires_special_args)
-    # ──────────────────────────────────────────────────────────────────────
-
-    # Non-parallel (sequential) acquisition functions
-    SEQUENTIAL_MAPPING = {
+    ACQUISITION_MAPPING = {
+        # Sequential
         "mean_stddev": MeanStddev,
         "mean_std": MeanStddev,
         "mean_variance": MeanVariance,
@@ -731,15 +748,12 @@ def build_acquisition_function(name: str, model, **kwargs):
         "pnorm_stddev": pNormStddev,
         "pnorm": pNormStddev,
         "p_norm": pNormStddev,
-        # Oracle functions (require true target values)
+        # Oracle (sequential; require true target values)
         "oracle_rmse": OracleRMSE,
         "oracle_mae": OracleMAE,
         "oracle_marginal_nll": OracleMarginalNLL,
         "oracle_joint_nll": OracleJointNLL,
-    }
-
-    # Parallel acquisition functions
-    PARALLEL_MAPPING = {
+        # Parallel
         "stddev": Stddev,
         "std": Stddev,
         "context_dist": ContextDist,
@@ -749,45 +763,18 @@ def build_acquisition_function(name: str, model, **kwargs):
         "random": Random,
     }
 
-    # Oracle functions (subset of sequential, flagged for user warnings)
-    ORACLE_NAMES = {"oracle_rmse", "oracle_mae", "oracle_marginal_nll", "oracle_joint_nll"}
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Look up the class
-    # ──────────────────────────────────────────────────────────────────────
-
-    all_mapping = {**SEQUENTIAL_MAPPING, **PARALLEL_MAPPING}
-
-    if name_clean not in all_mapping:
-        available_sequential = sorted(set(SEQUENTIAL_MAPPING.keys()))
-        available_parallel = sorted(set(PARALLEL_MAPPING.keys()))
+    if name_clean not in ACQUISITION_MAPPING:
+        available = sorted(ACQUISITION_MAPPING.keys())
         raise ValueError(
             f"Unsupported acquisition_function='{name}'.\n"
-            f"  Sequential (non-parallel): {available_sequential}\n"
-            f"  Parallel: {available_parallel}"
+            f"  Available (incl. aliases): {available}"
         )
 
-    cls = all_mapping[name_clean]
-    is_parallel = name_clean in PARALLEL_MAPPING
-    is_oracle = name_clean in ORACLE_NAMES
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Warnings
-    # ──────────────────────────────────────────────────────────────────────
-
-    if is_oracle:
-        import warnings
-        warnings.warn(
-            f"Oracle acquisition function '{cls.__name__}' requires true target values. "
-            f"This is intended for retrospective evaluation, not operational deployment.",
-            UserWarning,
-            stacklevel=2,
-        )
+    cls = ACQUISITION_MAPPING[name_clean]
 
     # ──────────────────────────────────────────────────────────────────────
     # Instantiate with appropriate arguments
     # ──────────────────────────────────────────────────────────────────────
-
     shared_kwargs = dict(
         model=model,
         context_set_idx=context_set_idx,
@@ -805,12 +792,19 @@ def build_acquisition_function(name: str, model, **kwargs):
         print(f"Using acquisition function: {cls.__name__}")
 
     # ──────────────────────────────────────────────────────────────────────
-    # Attach metadata for downstream use
+    # Derive classification structurally (authoritative)
     # ──────────────────────────────────────────────────────────────────────
+    is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
+    is_oracle = isinstance(acq_fn, AcquisitionFunctionOracle)
 
-    acq_fn._is_parallel = is_parallel
-    acq_fn._is_oracle = is_oracle
-    acq_fn._config_name = name
+    if is_oracle:
+        import warnings
+        warnings.warn(
+            f"Oracle acquisition function '{cls.__name__}' requires true target values. "
+            f"This is intended for retrospective evaluation, not operational deployment.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     parallel_str = "parallel" if is_parallel else "sequential (non-parallel)"
     print(f"  Type: {parallel_str}")
@@ -957,23 +951,30 @@ def build_grids_and_masks(bundle, config, acq_fn):
     # is_parallel = al_cfg.acquisition_function.lower() in [
     #     "stddev", "std", "mean_variance", "mean_var",
     # ]
-    is_parallel = acq_fn._is_parallel
+    is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
 
     if is_parallel:
-        # Parallel: X_s == X_t, use candidate_coarsen_factor for both
-        coarsen = al_cfg.candidate_coarsen_factor or 1
+        candidate = al_cfg.candidate_coarsen_factor or 1
+        target = al_cfg.target_coarsen_factor or 1
+        if target != candidate:
+            import warnings
+            warnings.warn(
+                f"Parallel acquisition function requires X_s == X_t. "
+                f"Ignoring target_coarsen_factor={target}; using "
+                f"candidate_coarsen_factor={candidate} for both search and target grids.",
+                UserWarning,
+                stacklevel=2,
+            )
+        coarsen = candidate
         if coarsen > 1:
             grid = coarsen_spatial(base_grid, coarsen)
             mask = coarsen_mask(base_mask, coarsen)
         else:
             grid = base_grid
             mask = base_mask
-
         return {
-            "search_grid": grid,
-            "search_mask": mask,
-            "target_grid": grid,
-            "target_mask": mask,
+            "search_grid": grid, "search_mask": mask,
+            "target_grid": grid, "target_mask": mask,
         }
     else:
         # Sequential: X_s can be coarser than X_t
@@ -994,7 +995,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
             search_grid = base_grid
             search_mask = base_mask
 
-        
+
 
         return {
             "search_grid": search_grid,
@@ -1116,7 +1117,9 @@ def enforce_min_distance(X_new_df, min_dist_km, model):
             keep.append(row)
 
     filtered = pd.DataFrame(keep)
-    filtered.index.name = "priority"  # Recommended by Claude. Not sure what it does. Need to explore
+    filtered["greedy_iteration"] = filtered.index  # keep original acq-surface iteration
+    filtered = filtered.reset_index(drop=True)  # contiguous 0..k-1
+    filtered.index.name = "priority"
     if len(filtered) < len(X_new_df):
         print(f"  Min distance filter: kept {len(filtered)}/{len(X_new_df)} sensors")
 
@@ -1133,6 +1136,8 @@ def plot_active_learning_results(
     config,
     output_dir: Path,
     acquisition_name: str,
+    x1_name="lat",
+    x2_name="lon",
 ):
     """
     Plot acquisition surfaces and selected sensor locations.
@@ -1146,9 +1151,6 @@ def plot_active_learning_results(
     output_dir = Path(output_dir)
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
-
-    x1_name = recommended_df.columns[0]
-    x2_name = recommended_df.columns[1]
 
     # One acquisition map per iteration
     for iteration in acquisition_ds.iteration.values:
