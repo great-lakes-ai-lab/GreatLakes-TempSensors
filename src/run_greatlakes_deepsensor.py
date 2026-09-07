@@ -4,11 +4,14 @@
 import argparse
 from pathlib import Path
 import yaml
+import warnings
+warnings.simplefilter("always", DeprecationWarning)
+
 
 from pipeline.config import load_config, PipelineConfig, copy_config_to_run_dir, load_al_config
 from pipeline.data_loader import load_raw_datasets
 from pipeline.preprocessor import load_processed_cache, _cache_exists, preprocess_all
-from pipeline.task_builder import build_task_loader, gen_tasks, make_train_val_dates
+from pipeline.task_builder import build_task_loader, gen_tasks, make_train_val_dates, make_train_date_sampler
 from pipeline.model import setup_device, build_model, load_trained_model
 from pipeline.trainer import train_model
 
@@ -100,14 +103,34 @@ def main():
         print("\n" + "=" * 60)
         print("STAGE: TRAINING")
         print("=" * 60)
-        train_dates, val_dates = make_train_val_dates(config)
-        print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
+        train_dates, val_dates = make_train_val_dates(config)   # with the revamp of the date selection this really just returns the val dates. train dates gets derived
+        # print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
 
-        train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=42)
+        print(f"Generating {len(val_dates)} validation tasks")
         val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=123)
 
+        tc = config.training
+
+        if tc.train_date_mode == "random":
+            date_sampler, _, _ = make_train_date_sampler(config)
+        else:
+            date_sampler = None
+
+        if tc.resample_tasks_per_epoch:
+            def sample_train_tasks(epoch):
+                dates_ep = date_sampler(epoch) if date_sampler else train_dates
+                sample_train_tasks.n_requested = len(dates_ep)
+                return gen_tasks(tl_config, dates_ep, bundle, config, seed=tc.train_task_seed + epoch, progress=False, verbose=False)
+            sample_train_tasks.n_requested = None
+            train_tasks = sample_train_tasks(0)
+            train_task_sampler = sample_train_tasks
+        else:
+            train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=42)
+            train_task_sampler = None
+
         model = build_model(config, bundle, tl_config.task_loader)
-        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config)
+        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler)
+
 
         print(f"\nBest RMSE: {results['best_val_rmse']:.4f} at epoch {results['best_epoch']}")
 
@@ -154,7 +177,7 @@ if __name__ == "__main__":
     sys.argv = [
         "run_greatlakes_deepsensor.py",
         "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/debug_run_01/active_learning/al_config_debug.yaml",
-        "--stage", "active_learning",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run00_resume_dev_usable_model/al_config.yaml",
+        "--stage", "train",
     ]
     main()

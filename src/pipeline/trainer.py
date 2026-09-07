@@ -14,6 +14,7 @@ from deepsensor.train import Trainer
 
 from pipeline.config import PipelineConfig
 from pipeline.model import save_trained_model
+from pipeline.task_builder import TaskLoaderConfig
 
 
 def train_model(
@@ -23,7 +24,12 @@ def train_model(
     val_tasks: list,
     bundle: dict,
     config: PipelineConfig,
+    train_task_sampler=None,    # callable(epoch) -> list[Task]
 ) -> dict:
+
+    if isinstance(task_loader, TaskLoaderConfig):
+        task_loader = task_loader.task_loader
+
     tc = config.training
     trainer = Trainer(model, lr=tc.lr)
 
@@ -39,20 +45,52 @@ def train_model(
     train_rmse_interval = max(1, tc.n_epochs // 10)
 
     start_time = time.time()
+    t_sample_total = 0.0
+    t_train_total = 0.0
+    t_val_total = 0.0
 
     print(f"Training for {tc.n_epochs} epochs | lr={tc.lr} | "
           f"{len(train_tasks)} train tasks | {len(val_tasks)} val tasks")
     if tc.patience > 0:
         print(f"Early stopping enabled: patience={tc.patience}")
+    if train_task_sampler is not None:
+        what = ("dates + context points" if tc.train_date_mode == "random" else "context points")
+        print(f"Task resampling: ON (new {what} epoch)")
+    else:
+        print("Task resampling: OFF (static train tasks")
 
     for epoch in tqdm(range(1, tc.n_epochs + 1), desc="Training"):
+        if train_task_sampler is not None:
+            _t0 = time.time()
+            train_tasks = train_task_sampler(epoch)
+            t_train_total += time.time() - _t0
+            if epoch == 1:
+                n_req = getattr(train_task_sampler, "n_requested", None)
+                if n_req:
+                    n_skip = n_req - len(train_tasks)
+                    pct = 100 * len(train_tasks) / n_req
+                    print(f"  Epoch 1: {len(train_tasks)}/{n_req} dates yielded tasks "
+                          f"({pct:.1f}%); {n_skip} skipped")
+                    if pct < 90:
+                        print(f"  WARNING: {n_skip} dates ({100 - pct:.1f}%) produced no task. "
+                              f"Re-run with verbose task generation to inspect coverage gaps.")
+                    else:
+                        print(f"  Epoch 1 sampled {len(train_tasks)} train tasks")
+            elif len(train_tasks) == 0:
+                raise RuntimeError(f"Epoch {epoch}: task sampler returned 0 tasks.")
+
+
         # Train
+        _t0 = time.time()
         batch_losses = trainer(train_tasks)
+        t_train_total += time.time() - _t0
         epoch_loss = float(np.mean(batch_losses))
         losses.append(epoch_loss)
 
         # Validate
+        _t0 = time.time()
         val_result = compute_val_rmse(model, val_tasks, bundle, task_loader)
+        t_val_total += time.time() - _t0
         val_rmse = val_result["rmse"]
         val_rmses.append(val_rmse)
 
@@ -97,6 +135,15 @@ def train_model(
 
     print(f"\nTraining complete in {elapsed_min:.1f} minutes. "
           f"Best val RMSE: {best_val_rmse:.4f} (epoch {best_epoch})")
+    n_ep = len(losses)
+    print(f"  Time breakdown (total / per-epoch):")
+    print(f"    task sampling : {t_sample_total:6.1f}s / {t_sample_total / n_ep:5.2f}s "
+          f"({100 * t_sample_total / elapsed:4.1f}%)")
+    print(f"    training      : {t_train_total:6.1f}s / {t_train_total / n_ep:5.2f}s "
+          f"({100 * t_train_total / elapsed:4.1f}%)")
+    print(f"    validation    : {t_val_total:6.1f}s / {t_val_total / n_ep:5.2f}s "
+          f"({100 * t_val_total / elapsed:4.1f}%)")
+    print(f"    other/plots   : {elapsed - t_sample_total - t_train_total - t_val_total:6.1f}s")
 
     results = {
         "losses": losses,
@@ -108,6 +155,10 @@ def train_model(
         "early_stopped": tc.patience > 0 and epochs_without_improvement >= tc.patience,
         "training_time_seconds": float(elapsed),
         "training_time_minutes": float(elapsed_min),
+        "training_time_minutes": float(elapsed_min),
+        "time_sampling_seconds": float(t_sample_total),
+        "time_training_seconds": float(t_train_total),
+        "time_validation_seconds": float(t_val_total),
         "best_per_task_details": best_per_task_details,
     }
 
@@ -249,7 +300,11 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "environment": config.environment,
         "train_range": list(tc.train_range),
         "val_range": list(tc.val_range),
-        "date_subsample_factor": tc.date_subsample_factor,
+        "train_date_mode": tc.train_date_mode,
+        "train_date_stride": tc.train_date_stride,
+        "train_date_fraction": tc.train_date_fraction,
+        "n_train_dates_per_epoch": tc.n_train_dates_per_epoch,
+        "val_date_stride": tc.val_date_stride,
         "n_epochs": tc.n_epochs,
         "lr": tc.lr,
         "patience": tc.patience,
@@ -258,6 +313,8 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "internal_density": tc.internal_density,
         "n_context_points": tc.n_context_points,
         "vary_n_context": tc.vary_n_context,
+        "resample_tasks_per_epoch": tc.resample_tasks_per_epoch,
+        "train_task_seed": tc.train_task_seed,
         "min_n_context": tc.min_n_context,
         "max_n_context": tc.max_n_context,
         "include_bathy_as_context": tc.include_bathy_as_context,
@@ -269,6 +326,9 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "val_rmses": [float(r) for r in results["val_rmses"]],
         "training_time_seconds": results["training_time_seconds"],
         "training_time_minutes": results["training_time_minutes"],
+        "time_sampling_seconds": results["time_sampling_seconds"],
+        "time_training_seconds": results["time_training_seconds"],
+        "time_validation_seconds": results["time_validation_seconds"],
     }
 
     meta_path = model_dir / "training_metadata.json"

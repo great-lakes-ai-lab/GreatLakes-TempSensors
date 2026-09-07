@@ -82,6 +82,7 @@ def gen_tasks(
     seed: int = None,
     fixed_context_points: np.ndarray = None,
     progress: bool = True,
+    verbose: bool = True
 ) -> list:
     """
     Generate tasks for a list of dates.
@@ -117,8 +118,9 @@ def gen_tasks(
     if seed is not None:
         np.random.seed(seed)
 
-    print(f"\nNow generating {len(dates)} tasks "
-          f"(n_context={n_context}, vary={vary_n_context}, seed={seed})...")
+    if verbose:
+        print(f"\nNow generating {len(dates)} tasks "
+              f"(vary={vary_n_context}, seed={seed})...")
 
     tasks = []
     skipped = []
@@ -163,7 +165,7 @@ def gen_tasks(
         task = task.remove_target_nans()
         tasks.append(task)
 
-    if skipped:
+    if skipped and verbose:
         skipped_dates = pd.to_datetime([d for d, _ in skipped])
         print(f"Skipped {len(skipped)} dates due to errors.")
         print(f"    Skip date range: {skipped_dates.min().date()} to {skipped_dates.max().date()}")
@@ -177,50 +179,55 @@ def gen_tasks(
 
 
 def make_train_val_dates(config: PipelineConfig) -> tuple:
+    """
+    Resolve deterministic train/val date sets.
+
+    Val dates always use val_date_stride. Train dates use train_date_stride —
+    these are the actual training dates when train_date_mode='strided', and
+    serve only as a fallback/reference when mode='random'.
+    """
     tc = config.training
-    train_dates = dates_from_intervals(tc.train_range, tc.date_subsample_factor)
-    val_dates   = dates_from_intervals(tc.val_range,   tc.date_subsample_factor)
+    train_dates = dates_from_intervals(tc.train_range, tc.train_date_stride)
+    val_dates = dates_from_intervals(tc.val_range, tc.val_date_stride)
+
     print(f"\nNow resolving train/val dates...")
-    print(f"  train_range intervals: {tc.train_range} → {len(train_dates)} dates")
-    print(f"  val_range   intervals: {tc.val_range} → {len(val_dates)} dates")
+    if not tc.train_date_mode == 'random':
+        print(f"  train_range {tc.train_range} | mode={tc.train_date_mode}, "
+              f"stride={tc.train_date_stride} → {len(train_dates)} strided dates")
+    print(f"  training sampling is random. Dates chosen later per epoch")
+    print(f"  val_range   {tc.val_range} | stride={tc.val_date_stride} "
+          f"→ {len(val_dates)} dates")
     return train_dates, val_dates
 
 
-def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stride: bool = True):
+def make_train_date_sampler(config: PipelineConfig):
     """
-    Build a normalized DatetimeIndex from a list of (start, end) intervals.
+    Build a callable(epoch) -> DatetimeIndex drawing random dates from the
+    full daily train_range pool. Only used when train_date_mode='random'.
 
-    Parameters
-    ----------
-    intervals : list[tuple[str, str]]
-    subsample_factor : int
-        Stride applied to daily dates.
-    per_interval_stride : bool
-        If True, stride is applied *within each interval* (each block represented,
-        avoids phase artifacts). If False, intervals are concatenated then strided.
-
-    Returns
-    -------
-    pd.DatetimeIndex (normalized, sorted, de-duplicated)
+    Returns (sampler, pool, n_per_epoch).
     """
-    import pandas as pd
+    tc = config.training
+    pool = dates_from_intervals(tc.train_range, subsample_factor=1)
 
-    if not intervals:
-        return pd.DatetimeIndex([])
+    if len(pool) == 0:
+        raise ValueError(f"train_range produced no dates: {tc.train_range}")
 
-    factor = max(1, int(subsample_factor))
-    pieces = []
-    for start, end in intervals:
-        block = pd.date_range(start, end, freq="D")
-        if per_interval_stride:
-            block = block[::factor]
-        pieces.append(block)
+    if tc.n_train_dates_per_epoch is not None:
+        n = int(tc.n_train_dates_per_epoch)
+        basis = f"n_train_dates_per_epoch={n}"
+    else:
+        n = max(1, round(tc.train_date_fraction * len(pool)))
+        basis = f"fraction={tc.train_date_fraction}"
 
-    all_dates = pieces[0]
-    for b in pieces[1:]:
-        all_dates = all_dates.union(b)  # union sorts + dedupes
+    n = min(n, len(pool))
 
-    if not per_interval_stride:
-        all_dates = all_dates[::factor]
+    print(f"  train date sampler: pool={len(pool)} daily dates, "
+          f"drawing {n}/epoch ({basis}, {100 * n / len(pool):.1f}% coverage/epoch)")
 
-    return pd.to_datetime(all_dates).normalize()
+    def sample_dates(epoch: int):
+        rng = np.random.default_rng(tc.train_task_seed + epoch)
+        idx = rng.choice(len(pool), size=n, replace=False)
+        return pool[np.sort(idx)]
+
+    return sample_dates, pool, n

@@ -1,3 +1,5 @@
+# /src/config/config_template_local.yaml
+
 run:
   name: default_run
   notes: "This is a template config yaml. Make a copy of it and rename it "
@@ -69,15 +71,28 @@ preprocessing:
 training:
   train_range: ["2018-01-01", "2020-12-31"] # The range of data exposed to the model for training
   val_range: ["2021-01-01", "2022-12-31"] # The range of data exposed for validation
-  date_subsample_factor: 20  # Every X days for sampling. The lower the value the higher the number of training and validation tasks
-  n_epochs: 60  # How many epochs the training loop will go for
-  lr: 5.0e-5  # The learning rate. This is the default
-  patience: 15  # Number of training iterations with no improvement before early exit of training
-  internal_density: 250  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+
+  # --- Date selection ---
+  resample_dates_per_epoch: true  # Also draw fresh dates from teh full train range each epoch, Requires resample_tasks_epoch to be true and train_date_mode to be random
+  train_date_mode: random     # "strided" (fixed every-Nth-day set) or "random" (fresh draw each epoch)
+  train_date_stride: 20       # mode=strided only: every Nth day; guarantees a min N-day gap between tasks
+  train_date_fraction: 0.05   # mode=random only: fraction of all daily dates in train_range drawn per epoch
+  n_train_dates_per_epoch:    # mode=random only: blank/null -> use fraction; set an int to pin the count
+  val_date_stride: 20         # Stride for validation dates. Always deterministic (same set every epoch)
+
+  # --- Context sampling ---
+  resample_tasks_per_epoch: true  # Regenerate context points each epoch (Andersson-style). If false, one fixed task set is reused.
   n_context_points: 60  # The number of context points used for a training/validation task. Ignored if vary_n_context is False
   vary_n_context: true  # Whether or not to vary the number of context sampling points for task training/validation
   min_n_context: 10  # If vary_n_context is true, then the lowest possible random number of context points
   max_n_context: 200  # If vary_n_context is true, then the highest possible random number of context points
+  train_task_seed: 1000  # Per-epoch task seed = train_task_seed + epoch. Change for a different resampling stream.
+
+  # --- Optimization ---
+  n_epochs: 4  # How many epochs the training loop will go for
+  lr: 5.0e-5  # The learning rate. This is the default
+  patience: 15  # Number of training iterations with no improvement before early exit of training
+  internal_density: 75  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
 
 
 prediction:

@@ -1,6 +1,4 @@
-# Originally from: deepsensor_greatlakes
-"""Spatial and temporal coordinate standardization utilities."""
-
+# src/utils/coordinates.py
 import numpy as np
 import pandas as pd
 import xarray as xr

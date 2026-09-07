@@ -1,4 +1,4 @@
-# Originally from: deepsensor_greatlakes
+# src/utils/seasonal.py
 """Seasonal cycle computation and anomaly processing."""
 
 import os

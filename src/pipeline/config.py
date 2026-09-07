@@ -7,6 +7,7 @@ from typing import Optional, Union
 import yaml
 import shutil
 import os
+import warnings
 
 from utils.dates import dates_from_intervals
 
@@ -97,15 +98,25 @@ class PreprocessingConfig:
 class TrainingConfig:
     train_range: list = field(default_factory=lambda: [("2019-01-01", "2020-12-31")])
     val_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
-    date_subsample_factor: int = 5
+
+    train_date_mode: str = "random"  # "strided" or "random"
+    train_date_stride: int = 5  # mode=strided: min gap in days
+    train_date_fraction: float = 0.05  # mode=random: fraction of daily pool per epoch
+    n_train_dates_per_epoch: int = None  # mode=random: absolute override of fraction
+    val_date_stride: int = 5  # val dates are always deterministic
+
     n_epochs: int = 50
     lr: float = 5e-5
     internal_density: int = 250
+    patience: int = 0  # 0 = no early stopping
+
     n_context_points: int = 50
     vary_n_context: bool = True
     min_n_context: int = 20
     max_n_context: int = 75
-    patience: int = 0  # 0 = no early stopping
+
+    resample_tasks_per_epoch: bool = True
+    train_task_seed: int = 100 # per-epoch seed = train_task_seed + epoch
     include_bathy_as_context: bool = False
     bathy_context_sampling: str = "random_lake_points"  # "all", "random_lake_points", or integer (e.g. 1000)
 
@@ -218,8 +229,6 @@ class PipelineConfig:
     def validate(self):
         from lakes import LAKE_BOUNDS
         import pandas as pd
-        import warnings
-
         # Defensive: ensure canonical list-of-intervals form
         self.preprocessing.fit_range = _normalize_ranges(self.preprocessing.fit_range)
         self.training.train_range = _normalize_ranges(self.training.train_range)
@@ -256,6 +265,25 @@ class PipelineConfig:
         train_spans = _check_intervals(self.training.train_range, "train_range")
         val_spans = _check_intervals(self.training.val_range, "val_range")
         _check_intervals(self.active_learning.eval_range, "eval_range")
+
+        # Date-selection sanity
+        tc = self.training
+        if tc.train_date_mode not in ("strided", "random"):
+            raise ValueError(
+                f"train_date_mode must be 'strided' or 'random', got '{tc.train_date_mode}'"
+            )
+        if tc.train_date_mode == "random":
+            if not (0 < tc.train_date_fraction <= 1):
+                raise ValueError(
+                    f"train_date_fraction must be in (0, 1], got {tc.train_date_fraction}"
+                )
+            if not tc.resample_tasks_per_epoch:
+                raise ValueError(
+                    "train_date_mode='random' requires resample_tasks_per_epoch=True "
+                    "(dates can only be redrawn if tasks are regenerated each epoch)."
+                )
+        if tc.train_date_stride < 1 or tc.val_date_stride < 1:
+            raise ValueError("train_date_stride and val_date_stride must be >= 1")
 
         # Train/val leakage check: warn if any val interval starts before max train end
         max_train_end = max(e for _, e in train_spans)
@@ -298,7 +326,25 @@ def load_config(config_path: str) -> PipelineConfig:
     preprocessing = PreprocessingConfig(**raw.get("preprocessing", {}))
     preprocessing.fit_range = _normalize_ranges(preprocessing.fit_range)
 
-    training = TrainingConfig(**raw.get("training", {}))
+    training_raw = dict(raw.get("training", {}))
+    if "date_subsample_factor" in training_raw:
+        old = training_raw.pop("date_subsample_factor")
+        training_raw.setdefault("train_date_stride", old)
+        training_raw.setdefault("val_date_stride", old)
+        warnings.warn(
+            f"'date_subsample_factor' is deprecated; mapped to "
+            f"train_date_stride={old} and val_date_stride={old}. "
+            f"Use the explicit keys instead.")
+    if "resample_dates_per_epoch" in training_raw:
+        old = training_raw.pop("resample_dates_per_epoch")
+        training_raw.setdefault("train_date_mode", "random" if old else "strided")
+        warnings.warn(
+            f"'resample_dates_per_epoch' is deprecated; mapped to "
+            f"train_date_mode={'random' if old else 'strided'}."
+        )
+    training = TrainingConfig(**training_raw)
+
+
     training.train_range = _normalize_ranges(training.train_range)
     training.val_range = _normalize_ranges(training.val_range)
 

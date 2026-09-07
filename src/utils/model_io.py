@@ -1,4 +1,4 @@
-# Originally from: deepsensor_greatlakes
+# src/utils/model_io.py
 """ConvNP model save/load utilities."""
 
 import os
