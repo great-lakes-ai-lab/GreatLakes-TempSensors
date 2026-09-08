@@ -90,9 +90,13 @@ class DataSourceEntry:
 
 @dataclass
 class PreprocessingConfig:
-    fit_range: list = field(default_factory=lambda: [("2019-01-01", "2019-12-31")])
+    fit_range: list = field(default_factory=list)   # empty -> inherit train_range
     force_reprocess: bool = False
 
+    # Seasonal cycle / anomaly options
+    climatology_method: str = "harmonic"   # "monthly" | "daily_doy" | "harmonic"
+    n_harmonics: int = 3                   # method="harmonic"
+    smooth_window: int = 15                # method="daily_doy", days; 0 = off
 
 @dataclass
 class TrainingConfig:
@@ -229,11 +233,40 @@ class PipelineConfig:
     def validate(self):
         from lakes import LAKE_BOUNDS
         import pandas as pd
+
+        # PipelineConfig.validate(), after the _normalize_ranges block
+        if not self.preprocessing.fit_range:
+            self.preprocessing.fit_range = list(self.training.train_range)
+            print(f"fit_range not set — inheriting train_range: {self.preprocessing.fit_range}")
+        elif self.preprocessing.fit_range != self.training.train_range:
+            warnings.warn(
+                f"preprocessing.fit_range {self.preprocessing.fit_range} differs from "
+                f"training.train_range {self.training.train_range}. Normalization and "
+                f"climatology statistics will be fitted on a different period than the "
+                f"model trains on. Andersson et al. use a single period for both."
+            )
+
         # Defensive: ensure canonical list-of-intervals form
         self.preprocessing.fit_range = _normalize_ranges(self.preprocessing.fit_range)
         self.training.train_range = _normalize_ranges(self.training.train_range)
         self.training.val_range = _normalize_ranges(self.training.val_range)
         self.active_learning.eval_range = _normalize_ranges(self.active_learning.eval_range)
+
+
+
+        valid_methods = ("monthly", "daily_doy", "harmonic")
+        if self.preprocessing.climatology_method not in valid_methods:
+            raise ValueError(
+                f"climatology_method must be one of {valid_methods}, "
+                f"got '{self.preprocessing.climatology_method}'"
+            )
+        if self.preprocessing.n_harmonics < 1:
+            raise ValueError("n_harmonics must be >= 1")
+
+        if not self.preprocessing.fit_range:
+            self.preprocessing.fit_range = list(self.training.train_range)
+            print(f"fit_range not set — inheriting train_range: "
+                  f"{self.preprocessing.fit_range}")
 
         # Lake name
         if self.lake not in LAKE_BOUNDS:

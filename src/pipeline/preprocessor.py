@@ -92,8 +92,21 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
         if source.use_anomalies and name in standardized:
             print(f"\nNow computing anomalies for '{name}' (removing monthly climatology)...")
             seasonal_dir = Path(config.paths.seasonal_dir)
+            # anom_ds, seasonal_processor = _compute_anomalies(
+            #     standardized[name],
+            #     seasonal_dir,
+            #     fit_intervals=config.training.train_range,
+            #     name=name,
+            # )
+            pc = config.preprocessing
             anom_ds, seasonal_processor = _compute_anomalies(
-                standardized[name], seasonal_dir
+                standardized[name],
+                Path(config.paths.seasonal_dir),
+                fit_intervals=config.training.train_range,
+                name=name,
+                method=pc.climatology_method,
+                n_harmonics=pc.n_harmonics,
+                smooth_window=pc.smooth_window,
             )
             # Store anomalies alongside original
             anom_key = f"{name}_anom"
@@ -256,26 +269,59 @@ def _coarsen_sources(raw_datasets: dict, config: PipelineConfig) -> dict:
 # -----------------------------------------------------------------------
 
 def _compute_anomalies(
-    sst_stand: xr.Dataset,
+    ds: xr.Dataset,
     seasonal_dir: Optional[Path] = None,
+    fit_intervals: Optional[list] = None,
+    name: str = "target",
+    method: str = "harmonic",
+    n_harmonics: int = 3,
+    smooth_window: int = 15,
 ) -> tuple:
-    """Compute anomalies by removing monthly climatology."""
+    """
+    Remove a seasonal cycle fitted on `fit_intervals` (the training period)
+    from the full record.
+    """
     seasonal_processor = SeasonalCycleProcessor()
-    seasonal_processor.calculate(sst_stand)
+    seasonal_processor.calculate(
+        ds,
+        fit_intervals=fit_intervals,
+        method=method,
+        n_harmonics=n_harmonics,
+        smooth_window=smooth_window,
+    )
+
+    md = seasonal_processor.metadata
+    detail = {
+        "monthly": "12 monthly means",
+        "daily_doy": f"366 DOY means, smooth_window={md['smooth_window']}d",
+        "harmonic": f"{md['n_harmonics']} annual harmonics",
+    }[method]
+    print(f"    method={method} ({detail})")
+    print(f"    fit on {md['fit_n_timesteps']} steps "
+          f"({md['fit_time_min']} → {md['fit_time_max']}) "
+          f"from {md['fit_intervals']}")
+    print(f"    applying to {str(ds.time.values.min())[:10]} → "
+          f"{str(ds.time.values.max())[:10]}")
 
     if seasonal_dir is not None:
         seasonal_dir = Path(seasonal_dir)
         seasonal_dir.mkdir(parents=True, exist_ok=True)
-        seasonal_processor.save(str(seasonal_dir))
+        seasonal_processor.save(str(seasonal_dir), name=f"{name}_seasonal_cycle")
 
-    sst_anom = seasonal_processor.compute_anomalies(sst_stand)
+    anom = seasonal_processor.compute_anomalies(ds)
 
-    # Rename variable for clarity (e.g., "sst" -> "sst_anom")
-    for var in list(sst_anom.data_vars):
+    n_in, n_out = ds.sizes["time"], anom.sizes["time"]
+    if n_out != n_in:
+        raise ValueError(
+            f"Anomaly computation dropped {n_in - n_out} timesteps "
+            f"({n_in} -> {n_out}). Incomplete climatology coverage."
+        )
+
+    for var in list(anom.data_vars):
         if not var.endswith("_anom"):
-            sst_anom = sst_anom.rename({var: f"{var}_anom"})
+            anom = anom.rename({var: f"{var}_anom"})
 
-    return sst_anom, seasonal_processor
+    return anom, seasonal_processor
 
 
 # -----------------------------------------------------------------------
@@ -540,6 +586,9 @@ def _save_cache(config: PipelineConfig, bundle: dict):
         "lake": config.lake,
         "environment": config.environment,
         "fit_range": list(config.preprocessing.fit_range),
+        "climatology_method": config.preprocessing.climatology_method,
+        "n_harmonics": config.preprocessing.n_harmonics,
+        "smooth_window": config.preprocessing.smooth_window,
         "saved_datasets": saved_datasets,
         "saved_at": str(pd.Timestamp.now()),
     }
@@ -583,8 +632,8 @@ def load_processed_cache(config: PipelineConfig) -> dict:
     # Load seasonal processor if available
     bundle["seasonal_processor"] = None
     if seasonal_dir.exists():
-        nc_files = list(seasonal_dir.glob("*_seasonal_cycle.nc"))
-        meta_files = list(seasonal_dir.glob("*_metadata.json"))
+        nc_files = sorted(seasonal_dir.glob("*_seasonal_cycle.nc"))
+        meta_files = sorted(seasonal_dir.glob("*_seasonal_cycle_metadata.json"))
         if nc_files and meta_files:
             bundle["seasonal_processor"] = SeasonalCycleProcessor.load(
                 str(nc_files[-1]), str(meta_files[-1])

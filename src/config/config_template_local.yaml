@@ -65,8 +65,11 @@ data_sources:
     fill_values: []
 
 preprocessing:
-  fit_range: ["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
-  force_reprocess: False  # If true data will be reprocessed each time the pipeline runs
+  fit_range: # Now inherits from train range following andersson et al 2023. Can override by entering dates eg["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
+  force_reprocess: True  # If true data will be reprocessed each time the pipeline runs
+  climatology_method: harmonic   # monthly | daily_doy | harmonic
+  n_harmonics: 3   # for harmonics only
+  smooth_window: 15  # for daily_doy only
 
 training:
   train_range: ["2018-01-01", "2020-12-31"] # The range of data exposed to the model for training

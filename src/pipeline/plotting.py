@@ -245,7 +245,7 @@ def plot_prediction_summary(
 
     plt.suptitle(
         f"Prediction Summary: {config.lake.upper()} — {date}\n"
-        f"(Anomaly relative to monthly climatology)",
+        f"(Anomaly relative to climatology)",
         fontsize=14,
     )
     plt.tight_layout()
