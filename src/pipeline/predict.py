@@ -87,10 +87,10 @@ def run_predictions(config, bundle, tl_config):
 
     model = load_trained_model(config, bundle, tl_config.task_loader)
 
-    pred_dates = config.prediction.get_dates(config.training.val_range)
+    pred_dates = config.prediction.get_dates(config.training)
     n_context = config.prediction.n_context or config.training.n_context_points
 
-    save_dir = Path(config.paths.run_dir) / "predictions"
+    save_dir = Path(config.paths.run_dir) / "predictions" / config.prediction.split
 
     print(f"Running predictions for {len(pred_dates)} dates, n_context={n_context}")
 

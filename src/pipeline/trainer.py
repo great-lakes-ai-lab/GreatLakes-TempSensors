@@ -15,7 +15,10 @@ from deepsensor.train import Trainer
 from pipeline.config import PipelineConfig
 from pipeline.model import save_trained_model
 from pipeline.task_builder import TaskLoaderConfig
+from utils.metrics import point_area_weights, weighted_mse, aggregate_rmse, compute_weighted_rmse
 
+# Canonical metric identifier, written into training_metadata.json
+METRIC_NAME = "area_weighted_rmse_per_task_mean"
 
 def train_model(
     model,
@@ -89,14 +92,14 @@ def train_model(
 
         # Validate
         _t0 = time.time()
-        val_result = compute_val_rmse(model, val_tasks, bundle, task_loader)
+        val_result = compute_weighted_rmse(model, val_tasks, bundle, task_loader, return_per_task=True)
         t_val_total += time.time() - _t0
         val_rmse = val_result["rmse"]
         val_rmses.append(val_rmse)
 
         # Training RMSE (periodic)
         if epoch % train_rmse_interval == 0 or epoch == 1:
-            train_rmse = compute_train_rmse(model, train_tasks, bundle, task_loader)
+            train_rmse = compute_weighted_rmse(model, train_tasks, bundle, task_loader)["rmse"]
             train_rmses.append({"epoch": epoch, "rmse": train_rmse})
 
         # Checkpoint best
@@ -168,79 +171,6 @@ def train_model(
 
     return results
 
-def compute_val_rmse(model, val_tasks: list, bundle: dict, task_loader) -> dict:
-    """
-    Compute RMSE over validation tasks in physical (unnormalized) units.
-
-    Returns
-    -------
-    dict with keys:
-        - 'rmse': float, overall RMSE
-        - 'per_task': list of dicts with per-task details
-    """
-    data_processor = bundle["data_processor"]
-    target_var_ID = task_loader.target_var_IDs[0][0]
-
-    all_squared_errors = []
-    per_task_details = []
-
-    for task in val_tasks:
-        with torch.no_grad():
-            mean = data_processor.map_array(
-                model.mean(task), target_var_ID, unnorm=True
-            )
-            true = data_processor.map_array(
-                task["Y_t"][0], target_var_ID, unnorm=True
-            )
-
-        squared_errors = (mean - true) ** 2
-        task_rmse = float(np.sqrt(np.mean(squared_errors)))
-
-        # Get context point count (first context set = target variable points)
-        n_context = task["X_c"][0].shape[1] if len(task["X_c"]) > 0 else 0
-
-        per_task_details.append({
-            "date": str(task.get("time", "unknown")),
-            "rmse": task_rmse,
-            "n_context": n_context,
-            "n_target": task["X_t"][0].shape[1] if len(task["X_t"]) > 0 else 0,
-        })
-
-        all_squared_errors.append(squared_errors)
-
-    overall_rmse = float(np.sqrt(np.mean(np.concatenate(all_squared_errors))))
-
-    return {
-        "rmse": overall_rmse,
-        "per_task": per_task_details,
-    }
-
-
-def compute_train_rmse(model, train_tasks: list, bundle: dict, task_loader) -> float:
-    """
-    Compute RMSE over training tasks (for overfitting detection).
-
-    Only computed periodically to avoid slowing down training.
-    """
-    data_processor = bundle["data_processor"]
-    target_var_ID = task_loader.target_var_IDs[0][0]
-
-    all_squared_errors = []
-
-    for task in train_tasks:
-        with torch.no_grad():
-            mean = data_processor.map_array(
-                model.mean(task), target_var_ID, unnorm=True
-            )
-            true = data_processor.map_array(
-                task["Y_t"][0], target_var_ID, unnorm=True
-            )
-
-        squared_errors = (mean - true) ** 2
-        all_squared_errors.append(squared_errors)
-
-    return float(np.sqrt(np.mean(np.concatenate(all_squared_errors))))
-
 
 # -----------------------------------------------------------------------
 # Internal helpers
@@ -298,8 +228,10 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "run_notes": config.run.notes,
         "lake": config.lake,
         "environment": config.environment,
+        "fit_range": list(config.preprocessing.fit_range),
         "train_range": list(tc.train_range),
         "val_range": list(tc.val_range),
+        "test_range": list(tc.test_range),
         "train_date_mode": tc.train_date_mode,
         "train_date_stride": tc.train_date_stride,
         "train_date_fraction": tc.train_date_fraction,
@@ -319,6 +251,7 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "max_n_context": tc.max_n_context,
         "include_bathy_as_context": tc.include_bathy_as_context,
         "bathy_context_sampling": tc.bathy_context_sampling,
+        "metric": METRIC_NAME,
         "best_val_rmse": results["best_val_rmse"],
         "best_epoch": results["best_epoch"],
         "final_train_loss": results["losses"][-1],

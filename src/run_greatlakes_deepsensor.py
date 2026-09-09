@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 import yaml
 import warnings
-warnings.simplefilter("always", DeprecationWarning)
+
 
 
 from pipeline.config import load_config, PipelineConfig, copy_config_to_run_dir, load_al_config
@@ -27,7 +27,7 @@ def main():
     parser.add_argument(
         "--stage", type=str, default="all",
         help="Which stages to run. Comma-separated or 'all'. "
-             "Options: preprocess, train, predict, diagnostics",
+             "Options: preprocess, train, predict, evaluate, diagnostics, active_learning",
     )
 
     args = parser.parse_args()
@@ -50,7 +50,7 @@ def main():
             # An AL overlay config only makes sense for AL-related stages
             stages = ["active_learning"]  # (+ "skill_curve" once added)
         else:
-            stages = ["preprocess", "train", "predict"]
+            stages = ["preprocess", "train", "evaluate"]
     else:
         stages = [s.strip() for s in args.stage.split(",")]
 
@@ -65,7 +65,7 @@ def main():
         )
 
     # Only copy config to run dir if we're modifying outputs
-    read_only_stages = {"diagnostics", "predict", "active_learning"}
+    read_only_stages = {"diagnostics", "predict", "evaluate", "active_learning"}
     if all(s in read_only_stages for s in stages):
         config.preprocessing.force_reprocess = False
     else:
@@ -142,6 +142,14 @@ def main():
         from pipeline.predict import run_predictions
         run_predictions(config, bundle, tl_config)
 
+    # 8.5 Evaluate on held-out split
+    if "evaluate" in stages:
+        print("\n" + "=" * 60)
+        print("STAGE: EVALUATION")
+        print("=" * 60)
+        from pipeline.evaluate import run_evaluation
+        run_evaluation(config, bundle, tl_config)
+
     # 9. Active learning
     if "active_learning" in stages:
         print("\n" + "=" * 60)
@@ -176,8 +184,8 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/run00_resume_dev_usable_model/al_config.yaml",
-        "--stage", "train",
+        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/test_the_test_split/config_used.yaml",
+        "--stage", "evaluate",
     ]
     main()

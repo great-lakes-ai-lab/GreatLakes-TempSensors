@@ -11,7 +11,7 @@ import matplotlib.colors as mcolors
 
 import os
 import matplotlib
-
+from utils.metrics import lake_area_weights, gridded_weighted_rmse
 
 def _should_show_plots(config) -> bool:
     """Determine whether to call plt.show() or just save and close."""
@@ -264,7 +264,15 @@ def plot_uncertainty_vs_error(
     save_dir=None,
 ):
     """
-    Scatter plot of predictive std vs absolute error at each grid point.
+    Diagnostic scatter of predictive std vs absolute error at each grid point.
+
+    NOT the canonical project metric. The scatter and the per-point summary
+    statistics are unweighted (equal weight per grid cell) because the purpose
+    here is to inspect the *shape* of the uncertainty-error relationship, which
+    cos(lat) weighting would obscure without changing.
+
+    For a quotable skill number, use the area-weighted RMSE printed below
+    (identical definition to utils.metrics / trainer.compute_weighted_rmse).
     """
     pred_ds = prediction_result["prediction"]
     date = prediction_result["date"]
@@ -280,50 +288,69 @@ def plot_uncertainty_vs_error(
 
     actual = actual_ds[actual_var].sel(time=date, method="nearest")
 
-    # Lake mask from actual SST valid pixels
+    # Lake mask from actual valid pixels, mapped onto the prediction grid
     lake_mask = actual.notnull()
-
-    # Interpolate actual to prediction grid and apply mask
     actual_interp = actual.interp_like(mean_da)
-    mask_interp = lake_mask.astype(float).interp_like(mean_da, method="nearest").fillna(0) > 0.5
+    mask_interp = (
+        lake_mask.astype(float)
+        .interp_like(mean_da, method="nearest")
+        .fillna(0) > 0.5
+    )
 
-    abs_error = np.abs((mean_da.where(mask_interp) - actual_interp.where(mask_interp)).values.ravel())
-    uncertainty = std_da.where(mask_interp).values.ravel()
+    mean_masked = mean_da.where(mask_interp)
+    actual_masked = actual_interp.where(mask_interp)
+    std_masked = std_da.where(mask_interp)
+
+    abs_error = np.abs((mean_masked - actual_masked).values.ravel())
+    uncertainty = std_masked.values.ravel()
 
     # Remove NaN pairs
     valid = ~(np.isnan(abs_error) | np.isnan(uncertainty))
     abs_error = abs_error[valid]
     uncertainty = uncertainty[valid]
 
-    # Temp add some prints about the error distributions
-    print(f"\n  --- Calibration Stats ({date}) ---")
-    print(f"  Lake points: {len(abs_error)}")
-    print(f"  Abs Error:  mean={abs_error.mean():.4f}, median={np.median(abs_error):.4f}, "
-          f"std={abs_error.std():.4f}, min={abs_error.min():.4f}, max={abs_error.max():.4f}")
-    print(f"  Uncertainty: mean={uncertainty.mean():.4f}, median={np.median(uncertainty):.4f}, "
-          f"std={uncertainty.std():.4f}, min={uncertainty.min():.4f}, max={uncertainty.max():.4f}")
-    print(f"  Error/Std ratio: mean={np.mean(abs_error / uncertainty):.4f}, "
-          f"median={np.median(abs_error / uncertainty):.4f}")
-    print(f"  Correlation (std vs |error|): {np.corrcoef(uncertainty, abs_error)[0, 1]:.4f}")
-
-    # What fraction of errors fall within 1σ and 2σ?
-    within_1sigma = np.mean(abs_error <= uncertainty)
-    within_2sigma = np.mean(abs_error <= 2 * uncertainty)
-    print(f"  Within 1σ: {within_1sigma * 100:.1f}% (ideal: 68.3%)")
-    print(f"  Within 2σ: {within_2sigma * 100:.1f}% (ideal: 95.4%)")
-    print(f"  ---")
-
-
     if len(abs_error) == 0:
         print("No valid lake points for calibration plot.")
         return
 
+    # ─── Canonical (area-weighted) skill number ──────────────────────────
+    weights = lake_area_weights(mean_masked, mask=mask_interp)
+    weighted_rmse_val = gridded_weighted_rmse(mean_masked, actual_masked, weights)
+
+    # ─── Unweighted per-point diagnostics ────────────────────────────────
+    ratio = abs_error / uncertainty
+    within_1sigma = np.mean(abs_error <= uncertainty)
+    within_2sigma = np.mean(abs_error <= 2 * uncertainty)
+
+    print(f"\n  --- Calibration Diagnostics ({date}) ---")
+    print(f"  Area-weighted RMSE (canonical): {weighted_rmse_val:.4f}")
+    print(f"  Lake points: {len(abs_error)}")
+    print("  [per-point stats below are UNWEIGHTED — diagnostic only]")
+    print(f"  Abs Error:   mean={abs_error.mean():.4f}, median={np.median(abs_error):.4f}, "
+          f"std={abs_error.std():.4f}, min={abs_error.min():.4f}, max={abs_error.max():.4f}")
+    print(f"  Uncertainty: mean={uncertainty.mean():.4f}, median={np.median(uncertainty):.4f}, "
+          f"std={uncertainty.std():.4f}, min={uncertainty.min():.4f}, max={uncertainty.max():.4f}")
+    print(f"  Error/Std ratio: mean={np.mean(ratio):.4f}, median={np.median(ratio):.4f}")
+    print(f"  Correlation (std vs |error|): {np.corrcoef(uncertainty, abs_error)[0, 1]:.4f}")
+    print(f"  Within 1σ: {within_1sigma * 100:.1f}% (ideal: 68.3%)")
+    print(f"  Within 2σ: {within_2sigma * 100:.1f}% (ideal: 95.4%)")
+    print("  ---")
+
+    # ─── Plot ────────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 6))
     ax.scatter(uncertainty, abs_error, alpha=0.1, s=5)
 
-    # 1:1 line (perfect calibration)
+    # 1:1 line — for a half-normal error distribution, perfect calibration
+    # actually gives E[|e|] = sigma * sqrt(2/pi) ≈ 0.798 * sigma, not 1:1.
     max_val = max(uncertainty.max(), abs_error.max())
-    ax.plot([0, max_val], [0, max_val], "r--", label="1:1 (perfect calibration)")
+    ax.plot([0, max_val], [0, max_val], "r--", alpha=0.7, label="1:1")
+    ax.plot(
+        [0, max_val],
+        [0, max_val * np.sqrt(2 / np.pi)],
+        "k-",
+        alpha=0.7,
+        label=r"Ideal: $E[|e|] = \sigma\sqrt{2/\pi}$",
+    )
 
     # Binned mean
     n_bins = 20
@@ -331,16 +358,16 @@ def plot_uncertainty_vs_error(
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     bin_means = []
     for i in range(n_bins):
-        mask = (uncertainty >= bin_edges[i]) & (uncertainty < bin_edges[i + 1])
-        if mask.sum() > 0:
-            bin_means.append(abs_error[mask].mean())
-        else:
-            bin_means.append(np.nan)
+        m = (uncertainty >= bin_edges[i]) & (uncertainty < bin_edges[i + 1])
+        bin_means.append(abs_error[m].mean() if m.sum() > 0 else np.nan)
     ax.plot(bin_centers, bin_means, "g-o", markersize=4, label="Binned mean |error|")
 
     ax.set_xlabel("Predictive Std (uncertainty)")
     ax.set_ylabel("Absolute Error")
-    ax.set_title(f"Calibration: Uncertainty vs Error ({date})\nLake points only")
+    ax.set_title(
+        f"Calibration Diagnostic: Uncertainty vs Error ({date})\n"
+        f"Lake points only, unweighted | area-weighted RMSE = {weighted_rmse_val:.4f}"
+    )
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -351,7 +378,6 @@ def plot_uncertainty_vs_error(
         save_path = Path(save_dir) / f"calibration_{date}.png"
 
     _finish_plot(config, save_path)
-
 
 def plot_prediction_timeseries(
         model,
