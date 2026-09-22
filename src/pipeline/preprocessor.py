@@ -90,7 +90,7 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     seasonal_processor = None
     for name, source in config.data_sources.items():
         if source.use_anomalies and name in standardized:
-            print(f"\nNow computing anomalies for '{name}' (removing monthly climatology)...")
+            print(f"\nNow computing anomalies for '{name}' (removing climatology)...")
             seasonal_dir = Path(config.paths.seasonal_dir)
             # anom_ds, seasonal_processor = _compute_anomalies(
             #     standardized[name],

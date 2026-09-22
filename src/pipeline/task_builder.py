@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from deepsensor.data import TaskLoader
 from utils.coordinates import generate_random_coordinates
 from utils.dates import dates_from_intervals
+from utils.seeds import derive_rng
 from pipeline.config import PipelineConfig
 
 
@@ -97,7 +98,7 @@ def gen_tasks(
     n_context : int, optional
     vary_n_context : bool, optional
     min_n, max_n : int, optional
-    seed : int, optional
+    seed : int | np.random.Generator |optional
     fixed_context_points : np.ndarray, optional
         Array of shape (2, N) with normalized [lat, lon] coordinates.
         If provided, these exact points are used as context for every task.
@@ -115,12 +116,12 @@ def gen_tasks(
     min_n = min_n if min_n is not None else tc.min_n_context
     max_n = max_n if max_n is not None else tc.max_n_context
 
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
     if verbose:
+        seed_label = seed if isinstance(seed, (int, np.integer)) else "derived"
         print(f"\nNow generating {len(dates)} tasks "
-              f"(vary={vary_n_context}, seed={seed})...")
+              f"(varying N context points={vary_n_context}, seed={seed_label})...")
 
     tasks = []
     skipped = []
@@ -131,7 +132,7 @@ def gen_tasks(
             random_lake_points = fixed_context_points
         else:
             if vary_n_context:
-                N = np.random.randint(min_n, max_n)
+                N = int(rng.integers(min_n, max_n))
             else:
                 N = n_context
 
@@ -139,6 +140,7 @@ def gen_tasks(
                 bundle["lakemask_sampling"],
                 N=N,
                 data_processor=bundle["data_processor"],
+                rng=rng
             )
 
         # Build context_sampling list
@@ -226,7 +228,7 @@ def make_train_date_sampler(config: PipelineConfig):
           f"drawing {n}/epoch ({basis}, {100 * n / len(pool):.1f}% coverage/epoch)")
 
     def sample_dates(epoch: int):
-        rng = np.random.default_rng(tc.train_task_seed + epoch)
+        rng = derive_rng(tc.train_task_seed, epoch, "dates")
         idx = rng.choice(len(pool), size=n, replace=False)
         return pool[np.sort(idx)]
 

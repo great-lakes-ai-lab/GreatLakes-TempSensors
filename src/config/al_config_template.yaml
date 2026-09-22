@@ -96,3 +96,19 @@ active_learning:
   #   (they set X_t = X_s internally) and have no per-point "before" baseline to
   #   difference against. If diff=True is set with a parallel function, it is
   #   automatically ignored (with a warning) and diff=False is used.
+
+skill_curve:
+  name: template
+  notes: "prefix sweep + random envelope on the test split"
+
+  al_experiments: [template]     # [] -> auto-discover
+  split: test
+  date_subsample_factor: 30
+
+  k_max: null                    # null -> all recommendations
+  random_baseline: true
+  random_seeds: [0, 1, 2]
+  random_mode: augment           # augment | replace
+
+  compute_joint_nll: false
+  save_skill_maps: endpoints     # false | endpoints | all | [0, 5, 10]

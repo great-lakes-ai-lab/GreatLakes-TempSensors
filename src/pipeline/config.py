@@ -26,7 +26,7 @@ def _normalize_ranges(x) -> list:
     -------
     list[tuple[str, str]]
     """
-    if x is None:
+    if x is None or isinstance(x, list) and not x:
         return []
 
     # Nested form: first element is itself a list/tuple
@@ -100,6 +100,8 @@ class PathsConfig:
     data_processor_dir: str = ""
     seasonal_dir: str = ""
     active_learning_dir: str = ""
+    skill_curve: str = ""
+    output_root: str = ""
 
     def resolve(self, run_name: str):
         """Derive all output paths from output_root/run_name."""
@@ -113,11 +115,16 @@ class PathsConfig:
         self.data_processor_dir = str(run_dir / "deepsensor_config" / "data_processor")
         self.seasonal_dir = str(run_dir / "seasonal_cycles")
         self.active_learning_dir = str(run_dir / "active_learning")
+        self.skill_curve_dir = str(run_dir / "skill_curve")
 
     def resolve_active_learning(self, al_name: str) -> Path:
         """Resolve the active learning experiment directory."""
         al_dir = Path(self.active_learning_dir) / al_name
         return al_dir
+
+    def resolve_skill_curve(self, sc_name: str) -> Path:
+        """Resolve the skill-curve experiment directory."""
+        return Path(self.skill_curve_dir) / sc_name
 
 
 @dataclass
@@ -308,6 +315,84 @@ class ActiveLearningConfig:
 
 
 @dataclass
+class SkillCurveConfig:
+    name: str = "default"                # -> skill_curve/<name>/
+    notes: str = ""
+
+    # Which AL experiments to score. Empty list -> auto-discover all under
+    # active_learning/ that contain a recommendations CSV.
+    al_experiments: list = field(default_factory=list)
+
+    # Held-out split (reuses training.{train,val,test}_range)
+    split: str = "test"
+    date_subsample_factor: int = 30
+
+    # Number of greedy picks to walk through. None -> all available.
+    k_max: int = None
+
+    # Random-placement envelope
+    random_baseline: bool = True
+    random_seeds: list = field(default_factory=lambda: [0, 1, 2])
+    # "augment": baseline context + k random points (isolates placement quality)
+    # "replace": (n_context + k) fully random points
+    random_mode: str = "augment"
+
+    # Expensive extras
+    compute_joint_nll: bool = False
+    # Time-aggregated spatial skill maps (per-cell sigma / RMSE / bias, per k).
+    # Costs no extra forward passes -- accumulated from the point predictions
+    # already computed during scoring. Which k to store:
+    # false / []        -> off
+    # true / "endpoints"-> [0, k_max]
+    # "all"             -> every k
+    # [0, 5, 10]        -> explicit list
+    save_skill_maps: object = "endpoints"
+
+    VALID_SPLITS = ("train", "val", "test")
+    VALID_RANDOM_MODES = ("augment", "replace")
+
+    def validate(self):
+        if self.split not in self.VALID_SPLITS:
+            raise ValueError(
+                f"skill_curve.split must be one of {self.VALID_SPLITS}, "
+                f"got '{self.split}'"
+            )
+        if self.random_mode not in self.VALID_RANDOM_MODES:
+            raise ValueError(
+                f"skill_curve.random_mode must be one of "
+                f"{self.VALID_RANDOM_MODES}, got '{self.random_mode}'"
+            )
+        if self.k_max is not None and self.k_max < 0:
+            raise ValueError("skill_curve.k_max must be >= 0 or null")
+
+        sm = self.save_skill_maps
+
+        if isinstance(sm, str) and sm not in ("all", "endpoints"):
+            raise ValueError(
+                f"skill_curve.save_skill_maps string form must be 'all' or "
+                f"'endpoints', got '{sm}'"
+            )
+
+        if isinstance(sm, list) and not all(
+                isinstance(v, int) and v >= 0 for v in sm
+        ):
+            raise ValueError(
+                "skill_curve.save_skill_maps list form must contain "
+                "non-negative integers"
+            )
+
+    def resolve_map_ks(self, k_max: int) -> set:
+        """Which k values to accumulate spatial maps for."""
+        sm = self.save_skill_maps
+        if sm is False or sm is None or sm == []:
+            return set()
+        if sm is True or sm == "endpoints":
+            return {0, k_max}
+        if sm == "all":
+            return set(range(k_max, 1))
+        return {k for k in sm if 0 <= k <= k_max}
+
+@dataclass
 class PipelineConfig:
     lake: str = "erie"
     environment: str = "local"  # "local" or "hpc"
@@ -318,6 +403,7 @@ class PipelineConfig:
     prediction: PredictionConfig = field(default_factory=PredictionConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     active_learning: ActiveLearningConfig = field(default_factory=ActiveLearningConfig)
+    skill_curve: SkillCurveConfig = field(default_factory=SkillCurveConfig)
     run: RunConfig = field(default_factory=RunConfig)
 
     def validate(self):
@@ -676,10 +762,15 @@ def load_al_config(al_config_path: str) -> PipelineConfig:
     config.active_learning = ActiveLearningConfig(**al_raw.get("active_learning", {}))
     config.active_learning.eval_range = _normalize_ranges(config.active_learning.eval_range)
 
-    # 7. Guardrail: never reprocess the training run's cache (Decision 4)
+    # 6b Overlay the skill curve section
+    if "skill_curve" in al_raw:
+        config.skill_curve = SkillCurveConfig(**(al_raw.get("skill_curve") or {}))
+    config.skill_curve.validate()
+
+    # 7. Guardrail: never reprocess the training run's cache
     config.preprocessing.force_reprocess = False
 
-    # 8. Verify model artifacts exist at (re-resolved) paths (Decision 3)
+    # 8. Verify model artifacts exist at (re-resolved) paths
     model_dir = Path(config.paths.model_dir)
     required = [
         model_dir / "model.pt",
@@ -701,6 +792,7 @@ def load_al_config(al_config_path: str) -> PipelineConfig:
     config._al_config_source_path = str(al_path)
 
     return config
+
 
 def copy_config_to_run_dir(config, config_path):
     run_dir = Path(config.paths.run_dir)

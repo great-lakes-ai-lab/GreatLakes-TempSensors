@@ -79,43 +79,52 @@ def standardize_coords(ds):
     return ds
 
 
-def generate_random_coordinates(mask_da, N, data_processor=None):
+def generate_random_coordinates(mask_da, N, data_processor=None, rng=None):
     """
-    Generate N random coordinates (lat, lon) from a mask with values 1 inside
-    the lake area, and normalize them using the DataProcessor if provided.
+    Draw N random lake points from a 1/0 sampling mask.
 
     Parameters
     ----------
-    mask_da : xarray.Dataset
-        Dataset containing a 'mask' variable (1 for valid, 0 for invalid areas).
+    mask_da : xr.Dataset
+        Must contain a 'mask' variable with dims (lat, lon), 1 = valid.
     N : int
-        Number of random points to generate.
+        Number of points to draw, without replacement.
     data_processor : DataProcessor, optional
-        DataProcessor object for normalization.
+        If given, returned coords are normalised to x1/x2.
+    rng : np.random.Generator | int | None
+        Local random stream. None -> nondeterministic. An int seeds a fresh
+        Generator; an existing Generator is used in place (and advanced), so
+        callers can thread one stream through many calls.
 
     Returns
     -------
-    numpy.ndarray
-        Array of shape (2, N) with [lat, lon] coordinates.
+    np.ndarray, shape (2, N)
+        Row 0 = x1 (lat), row 1 = x2 (lon). Normalised iff data_processor given.
     """
+
+    rng = np.random.default_rng(rng)
+
     mask = mask_da['mask'].values
     valid_indices = np.argwhere(mask == 1)
 
-    random_indices = valid_indices[np.random.choice(valid_indices.shape[0], N, replace=False)]
+    n_valid = valid_indices.shape[0]
+
+    if N > n_valid:
+        raise ValueError(
+            f"generate_random_coordinates: requested N={N} points but the "
+            f"sampling mask has only {n_valid} valid cells. Reduce N "
+            f"(training.max_n_context / active_learning.n_context) or lower "
+            f"the lake_mask coarsen_factor."
+        )
+
+    random_indices = valid_indices[rng.choice(n_valid, N, replace=False)]
 
     latitudes = mask_da['lat'].values[random_indices[:, 0]]
     longitudes = mask_da['lon'].values[random_indices[:, 1]]
 
-    dummy_variable = np.random.rand(N)
+    raw = np.stack([latitudes, longitudes])  # (2, N)
 
-    random_coords_df = pd.DataFrame({
-        'lat': latitudes,
-        'lon': longitudes,
-        'dummy': dummy_variable,
-    }).set_index(['lat', 'lon'])
+    if data_processor is not None:
+        return data_processor.map_coord_array(raw, unnorm=False)
 
-    if data_processor:
-        normalized_coords_df = data_processor(random_coords_df, method="min_max")
-        return normalized_coords_df.index.to_frame(index=False).values.T
-    else:
-        return np.vstack((latitudes, longitudes))
+    return raw

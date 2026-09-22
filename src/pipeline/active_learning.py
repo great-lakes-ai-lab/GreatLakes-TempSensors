@@ -571,12 +571,11 @@ def _generate_random_context(al_cfg, bundle) -> np.ndarray:
     """Generate random lake points and optionally save them."""
     from utils.coordinates import generate_random_coordinates
 
-    np.random.seed(al_cfg.context_seed)
-
     points = generate_random_coordinates(
         bundle["lakemask_sampling"],
         N=al_cfg.n_context,
         data_processor=bundle["data_processor"],
+        rng=al_cfg.context_seed
     )
 
     return points

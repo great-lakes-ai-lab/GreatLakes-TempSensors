@@ -66,22 +66,7 @@ def train_model(
         if train_task_sampler is not None:
             _t0 = time.time()
             train_tasks = train_task_sampler(epoch)
-            t_train_total += time.time() - _t0
-            if epoch == 1:
-                n_req = getattr(train_task_sampler, "n_requested", None)
-                if n_req:
-                    n_skip = n_req - len(train_tasks)
-                    pct = 100 * len(train_tasks) / n_req
-                    print(f"  Epoch 1: {len(train_tasks)}/{n_req} dates yielded tasks "
-                          f"({pct:.1f}%); {n_skip} skipped")
-                    if pct < 90:
-                        print(f"  WARNING: {n_skip} dates ({100 - pct:.1f}%) produced no task. "
-                              f"Re-run with verbose task generation to inspect coverage gaps.")
-                    else:
-                        print(f"  Epoch 1 sampled {len(train_tasks)} train tasks")
-            elif len(train_tasks) == 0:
-                raise RuntimeError(f"Epoch {epoch}: task sampler returned 0 tasks.")
-
+            t_sample_total += time.time() - _t0
 
         # Train
         _t0 = time.time()

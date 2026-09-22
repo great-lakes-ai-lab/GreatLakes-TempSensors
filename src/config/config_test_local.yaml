@@ -62,24 +62,60 @@ data_sources:
 #    fill_values: []
 
 preprocessing:
-  fit_range: ["2017-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
-  force_reprocess: false
+  # Normalization statistics and the seasonal climatology are fit here.
+  # ENFORCED: fit_range must sit wholly inside train_range — otherwise val/test
+  # statistics leak into the model. Setting it equal to train_range is the
+  # default recommendation.
+  fit_range: # Now inherits from train range following andersson et al 2023. Can override by entering dates eg["2019-01-01", "2019-12-31"]  # This is the range of data that will be used to set up the dataprocessor for scaling the data
+  force_reprocess: false  # If true data will be reprocessed each time the pipeline runs
+  # Seasonal Climatology
+  climatology_method: harmonic   # monthly | daily_doy | harmonic
+  n_harmonics: 3   # for harmonics only
+  smooth_window: 7  # for daily_doy only
 
 training:
-  train_range: ["2018-01-01", "2021-12-31"] # The range of data exposed to the model for training
-  val_range: ["2022-01-01", "2023-12-31"] # The range of data exposed for validation
-  date_subsample_factor: 60
-  n_epochs: 10
-  lr: 5.0e-5
-  patience: 15
-  internal_density: 50
-  n_context_points: 60
-  vary_n_context: true
-  min_n_context: 10
-  max_n_context: 200
+  # train / val / test must be mutually disjoint (enforced) and each span
+  # >= 1 full year (warned) so seasonal coverage is complete.
+  #   train -> gradient updates
+  #   val   -> checkpoint selection / early stopping
+  #   test   > held out; scored once by the `evaluate` stage
+  train_range: [["2018-01-01", "2018-12-31"]] # The range of data exposed to the model for training
+  val_range: [["2015-01-01", "2015-12-31"]] # The range of data exposed for validation
+  test_range: [["2017-01-01", "2017-12-31"]]
+
+  # --- Date selection ---
+  train_date_mode: random     # "strided" (fixed every-Nth-day set) or "random" (fresh draw each epoch)
+  train_date_stride: 20       # mode=strided only: every Nth day; guarantees a min N-day gap between tasks
+  train_date_fraction: 0.02   # mode=random only: fraction of all daily dates in train_range drawn per epoch
+  n_train_dates_per_epoch:   # mode=random only: blank/null -> use fraction; set an int to pin the count
+  val_date_stride: 30         # Stride for validation dates. Always deterministic (same set every epoch)
+
+  # --- Context sampling ---
+  resample_tasks_per_epoch: true  # Regenerate context points each epoch (Andersson-style). If false, one fixed task set is reused.
+  n_context_points: 60  # The number of context points used for a training/validation task. Ignored if vary_n_context is False
+  vary_n_context: true  # Whether or not to vary the number of context sampling points for task training/validation
+  min_n_context: 5  # If vary_n_context is true, then the lowest possible random number of context points
+  max_n_context: 200  # If vary_n_context is true, then the highest possible random number of context points
+  train_task_seed: 1000  # Per-epoch task seed = train_task_seed + epoch. Change for a different resampling stream.
+
+  # --- Optimization ---
+  n_epochs: 5  # How many epochs the training loop will go for
+  lr: 5.0e-5  # The learning rate. This is the default
+  patience: 15  # Number of training iterations with no improvement before early exit of training
+  internal_density: 50  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+
+
+evaluation:
+  split: val                 # Held-out split to score on. Use "val" while developing.
+  date_subsample_factor: 60    # Stride over the split range. 7 = weekly.
+  n_context_sweep: [10,  100]  # RMSE is meaningless without stating n_context
+  seeds: [0, 1]            # Random context placements; spread = baseline envelope for AL
 
 
 prediction:
+  # Which split the prediction dates are drawn from. Outputs land in
+  # predictions/<split>/ so val sanity-checks never overwrite test figures.
+  split: val
   # Option 1: Specific dates
   dates: ["2021-03-15", "2021-06-01", "2021-07-15", "2021-10-01", "2022-03-15", "2022-06-01", "2022-07-15", "2022-10-01"]
 

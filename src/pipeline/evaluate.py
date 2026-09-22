@@ -1,3 +1,6 @@
+# src/pipeline/evaluate.py
+"""Generate predictions from a trained model."""
+
 """Held-out test-set evaluation.
 
 Pure orchestration: loads the best checkpoint, sweeps context-set sizes and

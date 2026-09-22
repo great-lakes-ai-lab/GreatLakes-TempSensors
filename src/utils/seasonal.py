@@ -10,19 +10,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-
-
-
-
-"""Seasonal cycle computation and anomaly processing."""
-
-import os
-import json
-
-import numpy as np
-import pandas as pd
-import xarray as xr
-
 _VALID_METHODS = ("monthly", "daily_doy", "harmonic")
 
 
@@ -84,7 +71,6 @@ class SeasonalCycleProcessor:
             self._check_coverage(cycle, "month", 12)
 
         else:
-            doy_clim = fit_ds.groupby(f"{dim}.dayofyear").mean(dim=dim)
             doy_clim = fit_ds.groupby(f"{dim}.dayofyear").mean(dim=dim).compute()
             doy_clim = self._complete_doy(doy_clim)
 

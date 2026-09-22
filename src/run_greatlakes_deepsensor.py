@@ -1,4 +1,4 @@
-# src/run_greatlakes_deepsensor_pipeline.py
+# src/run_greatlakes_deepsensor.py
 """CLI entry point for the Great Lakes DeepSensor pipeline."""
 
 import argparse
@@ -14,6 +14,7 @@ from pipeline.preprocessor import load_processed_cache, _cache_exists, preproces
 from pipeline.task_builder import build_task_loader, gen_tasks, make_train_val_dates, make_train_date_sampler
 from pipeline.model import setup_device, build_model, load_trained_model
 from pipeline.trainer import train_model
+from utils.seeds import derive_rng
 
 
 def main():
@@ -48,7 +49,7 @@ def main():
     if args.stage == "all":
         if is_al_config:
             # An AL overlay config only makes sense for AL-related stages
-            stages = ["active_learning"]  # (+ "skill_curve" once added)
+            stages = ["active_learning", "skill_curve"]
         else:
             stages = ["preprocess", "train", "evaluate"]
     else:
@@ -65,7 +66,7 @@ def main():
         )
 
     # Only copy config to run dir if we're modifying outputs
-    read_only_stages = {"diagnostics", "predict", "evaluate", "active_learning"}
+    read_only_stages = {"diagnostics", "predict", "evaluate", "active_learning", "skill_curve"}
     if all(s in read_only_stages for s in stages):
         config.preprocessing.force_reprocess = False
     else:
@@ -103,13 +104,13 @@ def main():
         print("\n" + "=" * 60)
         print("STAGE: TRAINING")
         print("=" * 60)
+        tc = config.training
         train_dates, val_dates = make_train_val_dates(config)   # with the revamp of the date selection this really just returns the val dates. train dates gets derived
         # print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
 
         print(f"Generating {len(val_dates)} validation tasks")
-        val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=123)
-
-        tc = config.training
+        # Should the N context be the same for all validation tasks?
+        val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=False, n_context=tc.n_context_points)
 
         if tc.train_date_mode == "random":
             date_sampler, _, _ = make_train_date_sampler(config)
@@ -117,15 +118,34 @@ def main():
             date_sampler = None
 
         if tc.resample_tasks_per_epoch:
+            _cache = {}
             def sample_train_tasks(epoch):
+                if epoch in _cache:
+                    return _cache.pop(epoch)
                 dates_ep = date_sampler(epoch) if date_sampler else train_dates
-                sample_train_tasks.n_requested = len(dates_ep)
-                return gen_tasks(tl_config, dates_ep, bundle, config, seed=tc.train_task_seed + epoch, progress=False, verbose=False)
-            sample_train_tasks.n_requested = None
-            train_tasks = sample_train_tasks(0)
+                tasks = gen_tasks(
+                    tl_config, dates_ep, bundle, config,
+                    seed=derive_rng(tc.train_task_seed, epoch, "context"),
+                    progress=False, verbose=False,
+                )
+                if not tasks:
+                    raise RuntimeError(
+                        f"Epoch {epoch}: 0 tasks from {len(dates_ep)} dates."
+                    )
+                if epoch == 1:
+                    pct = 100 * len(tasks) / len(dates_ep)
+                    print(f"  Task coverage: {len(tasks)}/{len(dates_ep)} dates "
+                          f"yielded tasks ({pct:.1f}%)")
+                    if pct < 90:
+                        print(f"  WARNING: {len(dates_ep) - len(tasks)} dates "
+                              f"produced no task. Re-run gen_tasks with "
+                              f"verbose=True to inspect.")
+                return tasks
+            train_tasks = sample_train_tasks(1)
+            _cache[1] = train_tasks
             train_task_sampler = sample_train_tasks
         else:
-            train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=42)
+            train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "fixed_train"))
             train_task_sampler = None
 
         model = build_model(config, bundle, tl_config.task_loader)
@@ -158,6 +178,11 @@ def main():
         from pipeline.active_learning import run_active_learning
         run_active_learning(config, bundle, tl_config)
 
+    # 10. Skill curve
+    if "skill_curve" in stages:
+        from pipeline.skill_curve import run_skill_curve
+        run_skill_curve(config, bundle, tl_config)
+
     print(f"\nRun '{config.run.name}' complete.")
 
 
@@ -184,8 +209,10 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/test_the_test_split/config_used.yaml",
-        "--stage", "evaluate",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Erie_Eval_Pipeline_Modest/config_used.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep14_wL_Erie/al_config_sep14_wL_Erie.yaml",
+        # "--stage", "skill_curve",
+        "--stage", "all"
     ]
     main()

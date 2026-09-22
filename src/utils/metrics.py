@@ -324,6 +324,7 @@ def compute_weighted_scores(
     bundle: dict,
     task_loader,
     return_per_task: bool = True,
+    point_sink=None,
 ) -> dict:
     """
     Superset of compute_weighted_rmse: adds MAE, bias, Gaussian NLL, and
@@ -333,6 +334,9 @@ def compute_weighted_scores(
 
     Costs one extra forward pass component (model.std) per task, which is
     why the epoch loop keeps using compute_weighted_rmse.
+    Point_sink: called once per scorable task as point_sink(task, lats, longs, means, true, std, w)
+    with all arrays 1-D of equal len, flitered to finite points. Lets callers accumulate spatial maps without
+    rerunning model. Must not mutate it's arguments
     """
     dp = bundle["data_processor"]
     target_var_ID = task_loader.target_var_IDs[0][0]
@@ -353,14 +357,34 @@ def compute_weighted_scores(
         lats = target_lats(task, dp)
         w = point_area_weights(lats)
 
-        n = min(mean.size, true.size, std.size, w.size)
-        mean, true, std, w = mean[:n], true[:n], std[:n], w[:n]
+        # Carry target coords alongside so a poitn_sink can place calues on a grid
+        # Truncation/masking must apply identically to all arraygs
+        if point_sink is not None:
+            X_t = np.asarray(task["X_t"][0], dtype=float)
+            latlon = dp.map_coord_array(X_t, unnorm=True)
+            pt_lats = np.asarray(latlon[0].ravel())
+            pt_lons = np.asarray(latlon[1].ravel())
+        else:
+            pt_lats = pt_lons = None
+
+        sizes = [mean.size, true.size, std.size, w.size]
+        if pt_lats is not None:
+            sizes += [pt_lats.size, pt_lons.size]
+        n = min(sizes)
+        mean, true, std, w - mean[:n], true[:n], std[:n], w[:n]
+        if pt_lats is not None:
+            pt_lats, pt_lons = pt_lats[:n], pt_lons[:n]
 
         ok = np.isfinite(mean) & np.isfinite(true) & np.isfinite(std) & (std > 0)
         mean, true, std, w = mean[ok], true[ok], std[ok], w[ok]
+        if pt_lats is not None:
+            pt_lats, pt_lons = pt_lats[ok], pt_lons[ok]
         if mean.size == 0 or w.sum() == 0:
             continue
         w = w / w.sum()
+
+        if point_sink is not None:
+            point_sink(task, pt_lats, pt_lons, mean, true, std, w)
 
         err = mean - true
         mse = float(np.sum(w * err ** 2))
