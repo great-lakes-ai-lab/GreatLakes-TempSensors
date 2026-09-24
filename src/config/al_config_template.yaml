@@ -35,7 +35,7 @@ active_learning:
   name: template
   notes: "the template with defaults"
 
-  eval_range: [["2021-06-01", "2022-08-31"]]
+  eval_range: [["2021-06-01", "2022-08-31"]]   # Andersson used the validation period
   eval_subsample_factor: 15
 
   n_new_sensors: 3
@@ -47,7 +47,7 @@ active_learning:
   acquisition_fn_seed: 42
 
   # Context construction
-  context_source: random            # "random", "geojson" (buoy set), "buoy" (NYI)
+  context_source: geojson            # "random", "geojson" (buoy set), "buoy" (NYI)
   n_context: 8
   context_seed: 42
   save_context_points: true
@@ -68,8 +68,9 @@ active_learning:
   target_coarsen_factor: 1
 
   # Placement constraints
-  min_dist_between_sensors_km: 20.0
-  existing_sensors_path: null
+  min_dist_from_existing_km: 5.0
+  exclusion_points_path: null
+  min_dist_from_exclusion_km: 10.0
 
   # Outputs
   save_acquisition_surface: true
@@ -98,16 +99,16 @@ active_learning:
   #   automatically ignored (with a warning) and diff=False is used.
 
 skill_curve:
-  name: template
+  name: w_erie_mini_test
   notes: "prefix sweep + random envelope on the test split"
 
-  al_experiments: [template]     # [] -> auto-discover
-  split: test
-  date_subsample_factor: 30
+  al_experiments: []     # [] -> auto-discover
+  eval_range: [["2023-06-01", "2023-6-30"]]  # Andersson used the test period
+  date_subsample_factor: 7
 
   k_max: null                    # null -> all recommendations
   random_baseline: true
-  random_seeds: [0, 1, 2]
+  random_seeds: [0, 1]
   random_mode: augment           # augment | replace
 
   compute_joint_nll: false

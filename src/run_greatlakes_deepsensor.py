@@ -211,8 +211,8 @@ if __name__ == "__main__":
         "run_greatlakes_deepsensor.py",
         "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
         # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Erie_Eval_Pipeline_Modest/config_used.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep14_wL_Erie/al_config_sep14_wL_Erie.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep16_yml_test/al_config_yml_test.yaml",
         # "--stage", "skill_curve",
-        "--stage", "all"
+        # "--stage", "all"
     ]
     main()

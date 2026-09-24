@@ -357,8 +357,8 @@ def compute_weighted_scores(
         lats = target_lats(task, dp)
         w = point_area_weights(lats)
 
-        # Carry target coords alongside so a poitn_sink can place calues on a grid
-        # Truncation/masking must apply identically to all arraygs
+        # Carry target coords alongside so a point_sink can place values on a grid
+        # Truncation/masking must apply identically to all arrays
         if point_sink is not None:
             X_t = np.asarray(task["X_t"][0], dtype=float)
             latlon = dp.map_coord_array(X_t, unnorm=True)

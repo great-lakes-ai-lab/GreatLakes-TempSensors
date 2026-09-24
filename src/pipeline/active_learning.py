@@ -103,14 +103,15 @@ def run_active_learning(config, bundle, tl_config):
     print(f"  Search grid shape: {search_grid.shape}")
     print(f"  Target grid shape: {target_grid.shape}")
 
-    # 7. Optionally mask existing sensor locations
-    existing_points = load_existing_sensor_points(al_cfg.existing_sensors_path)
-    if existing_points is not None and al_cfg.min_dist_between_sensors_km > 0:
-        search_mask = mask_near_points(
-            search_mask,
-            existing_points,
-            min_dist_km=al_cfg.min_dist_between_sensors_km,
-        )
+    # 7. Optionally update the mask with minimum distances from existing or exclusion
+    exclusion_points = load_exclusion_points(al_cfg.exclusion_points_path)
+    if al_cfg.min_dist_from_existing_km > 0.0:
+        fixed_context_points = load_exclusion_points(al_cfg.context_geojson_path)
+    search_mask = mask_near_points(mask=search_mask, points=exclusion_points, min_dist_km=al_cfg.min_dist_from_exclusion_km,
+                                   points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km)
+    # Save the search mask to get used in skill_curve.py
+    search_mask_path = output_dir / "search_mask.nc"
+    search_mask.to_netcdf(search_mask_path)
 
     n_valid_candidates = int(search_mask.sum())
     assert al_cfg.n_new_sensors < n_valid_candidates, (
@@ -141,11 +142,12 @@ def run_active_learning(config, bundle, tl_config):
         diff=effective_diff,
     )
 
-    # 9. Post-processing: enforce minimum distance
-    if al_cfg.min_dist_between_sensors_km > 0:
+    # 9. Post-processing: enforce minimum distance. DISCOURAGED FROM USING THIS. IT BREAKS THE SEQUENTIAL
+    # SLATED TO MOVE OUT
+    if al_cfg.min_dist_from_existing_km > 0:
         X_new_df = enforce_min_distance(
             X_new_df,
-            min_dist_km=al_cfg.min_dist_between_sensors_km,
+            min_dist_km=al_cfg.min_dist_from_existing_km,
             model=model,
         )
 
@@ -163,7 +165,7 @@ def run_active_learning(config, bundle, tl_config):
             np.save(output_dir / "acquisition_surfaces.npy", acquisition_fn_ds.values)
         try:
             # Take the mean of the acquistion surface and save it 
-            mean_surface = acquisition_fn_ds.mean(["iteration", "time"],skipna=True)
+            mean_surface = acquisition_fn_ds.mean(["time"],skipna=True)
             mean_surface.to_netcdf(nc_mean_path)
             print(f"Saved acquisition surfaces: {nc_mean_path}")
         except Exception as e:
@@ -234,8 +236,8 @@ def _save_al_config(config, output_dir: Path):
         "diff": al_cfg.diff,
         "candidate_coarsen_factor": al_cfg.candidate_coarsen_factor,
         "target_coarsen_factor": al_cfg.target_coarsen_factor,
-        "min_dist_between_sensors_km": al_cfg.min_dist_between_sensors_km,
-        "existing_sensors_path": al_cfg.existing_sensors_path,
+        "min_dist_from_existing_km": al_cfg.min_dist_from_existing_km,
+        "exclusion_points_path": al_cfg.exclusion_points_path,
         "run_name": config.run.name,
         "lake": config.lake,
         "model_dir": config.paths.model_dir,
@@ -1018,7 +1020,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
 # Distance masking
 # ---------------------------------------------------------------------
 
-def load_existing_sensor_points(path) -> list:
+def load_exclusion_points(path) -> list:
     """
     Load existing sensor locations from CSV or GeoJSON.
 
@@ -1036,53 +1038,91 @@ def load_existing_sensor_points(path) -> list:
         lats, lons = load_points_from_geojson(path)
     else:
         raise ValueError(
-            f"Unsupported format '{suffix}' for existing_sensors_path. "
+            f"Unsupported format '{suffix}' for exclusion_points_path. "
             f"Supported: .csv, .geojson, .json"
         )
 
     return list(zip(lats.tolist(), lons.tolist()))
 
-def mask_near_points(mask: xr.DataArray, points, min_dist_km: float):
+def mask_near_points(
+    mask: xr.DataArray,
+    points,
+    min_dist_km: float,
+    points_2=None,
+    min_dist_km_2: float | None = None,
+):
     """
-    Set mask=False near selected/existing points.
+    Set mask=False near one or two sets of points.
 
     Parameters
     ----------
     mask : xr.DataArray
-        Boolean mask (2D) where True means candidate is allowed.
-    points : list[(lat, lon)]
+        Boolean 2D mask where True means the candidate is allowed.
+    points : iterable[tuple[float, float]]
+        First collection of (latitude, longitude) points.
     min_dist_km : float
+        Exclusion distance, in kilometers, for `points`.
+    points_2 : iterable[tuple[float, float]] or None, optional
+        Second collection of (latitude, longitude) points.
+    min_dist_km_2 : float or None, optional
+        Exclusion distance, in kilometers, for `points_2`.
+        Required when `points_2` is provided and nonempty.
+
+    Returns
+    -------
+    xr.DataArray
+        A copy of `mask`, with candidates inside either exclusion distance
+        set to False.
     """
-    if not points or min_dist_km <= 0:
+    point_groups = []
+
+    if points and min_dist_km > 0:
+        point_groups.append((points, min_dist_km))
+
+    if points_2:
+        if min_dist_km_2 is None:
+            raise ValueError(
+                "min_dist_km_2 must be provided when points_2 is nonempty."
+            )
+        if min_dist_km_2 > 0:
+            point_groups.append((points_2, min_dist_km_2))
+
+    if not point_groups:
         return mask
 
     lat_name, lon_name = find_lat_lon_names(mask)
 
-    # Create 2D coordinate grids aligned with mask dimensions
+    # Create 2D coordinate grids aligned with mask dimensions.
     lats_1d = mask[lat_name].values
     lons_1d = mask[lon_name].values
-
-    # meshgrid with indexing that matches (lat, lon) dimension order
     lon_2d, lat_2d = np.meshgrid(lons_1d, lats_1d)
 
-    updated = mask.values.copy().astype(bool)
+    updated = mask.values.astype(bool, copy=True)
 
-    for lat0, lon0 in points:
-        dist = approx_distance_km(lat_2d, lon_2d, lat0, lon0)
-        updated = updated & (dist >= min_dist_km)
+    for group_points, group_min_dist_km in point_groups:
+        for lat0, lon0 in group_points:
+            dist = approx_distance_km(lat_2d, lon_2d, lat0, lon0)
+            updated &= dist >= group_min_dist_km
 
     result = mask.copy(data=updated)
 
-    n_before = int(mask.sum())
-    n_after = int(result.sum())
-    print(f"  Masked existing sensors: {n_before} -> {n_after} valid candidates "
-          f"({n_before - n_after} removed)")
+    n_before = int(mask.sum().item())
+    n_after = int(result.sum().item())
+
+    print(
+        f"  Masked points: {n_before} -> {n_after} valid candidates "
+        f"({n_before - n_after} removed)"
+    )
 
     if n_after == 0:
+        distances = ", ".join(
+            f"{distance:g} km" for _, distance in point_groups
+        )
         raise ValueError(
-            f"All candidate locations were masked out! "
-            f"Try reducing min_dist_between_sensors_km (currently {min_dist_km} km) "
-            f"or using a finer candidate grid (lower candidate_coarsen_factor)."
+            "All candidate locations were masked out! "
+            f"Exclusion distances used: {distances}. "
+            "Try reducing the exclusion distances or using a finer candidate "
+            "grid (lower candidate_coarsen_factor)."
         )
 
     return result

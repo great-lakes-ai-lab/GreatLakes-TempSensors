@@ -304,10 +304,11 @@ class ActiveLearningConfig:
     target_coarsen_factor: int = 4
 
     # Placement constraints
-    min_dist_between_sensors_km: float = 0.0
+    min_dist_from_existing_km: float = 0.0
+    min_dist_from_exclusion_km: float = 0.0
 
     # Future hook for existing buoy locations
-    existing_sensors_path: str = None
+    exclusion_points_path: str = None
 
     # Outputs
     save_acquisition_surface: bool = True
@@ -324,7 +325,8 @@ class SkillCurveConfig:
     al_experiments: list = field(default_factory=list)
 
     # Held-out split (reuses training.{train,val,test}_range)
-    split: str = "test"
+    # split: str = "test"
+    eval_range: list = field(default_factory=lambda: [("2023-01-01", "2023-12-31")])
     date_subsample_factor: int = 30
 
     # Number of greedy picks to walk through. None -> all available.
@@ -352,11 +354,11 @@ class SkillCurveConfig:
     VALID_RANDOM_MODES = ("augment", "replace")
 
     def validate(self):
-        if self.split not in self.VALID_SPLITS:
-            raise ValueError(
-                f"skill_curve.split must be one of {self.VALID_SPLITS}, "
-                f"got '{self.split}'"
-            )
+        # if self.split not in self.VALID_SPLITS:
+        #     raise ValueError(
+        #         f"skill_curve.split must be one of {self.VALID_SPLITS}, "
+        #         f"got '{self.split}'"
+        #     )
         if self.random_mode not in self.VALID_RANDOM_MODES:
             raise ValueError(
                 f"skill_curve.random_mode must be one of "

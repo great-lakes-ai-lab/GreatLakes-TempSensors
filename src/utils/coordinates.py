@@ -103,8 +103,11 @@ def generate_random_coordinates(mask_da, N, data_processor=None, rng=None):
     """
 
     rng = np.random.default_rng(rng)
-
-    mask = mask_da['mask'].values
+    try:
+        mask = mask_da['mask'].values
+    except KeyError:
+        varname = list(mask_da.data_vars)[0]
+        mask = mask_da[varname].values
     valid_indices = np.argwhere(mask == 1)
 
     n_valid = valid_indices.shape[0]

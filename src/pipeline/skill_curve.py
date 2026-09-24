@@ -42,6 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from pipeline.model import load_trained_model
 from pipeline.task_builder import gen_tasks
@@ -185,11 +186,11 @@ def run_skill_curve(config, bundle, tl_config):
     out_dir = Path(config.paths.resolve_skill_curve(sc.name))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    split_range = _resolve_split_range(config, sc.split)
-    dates = dates_from_intervals(split_range, sc.date_subsample_factor)
+    # split_range = _resolve_split_range(config, sc.split)
+    dates = dates_from_intervals(sc.eval_range, sc.date_subsample_factor)
     if len(dates) == 0:
         raise ValueError(
-            f"No dates resolved from {sc.split}_range={split_range} "
+            f"No dates resolved from range={sc.eval_range} "
             f"with date_subsample_factor={sc.date_subsample_factor}"
         )
 
@@ -202,7 +203,7 @@ def run_skill_curve(config, bundle, tl_config):
         )
 
     print(f"\n=== Skill curve '{sc.name}' ===")
-    print(f"  Split: {sc.split}  ({len(dates)} dates, "
+    print(f"  Using  ({len(dates)} dates, "
           f"{dates.min().date()} to {dates.max().date()})")
     print(f"  Experiments: {[e['name'] for e in experiments]}")
 
@@ -232,12 +233,15 @@ def run_skill_curve(config, bundle, tl_config):
         if prev is None or k_max > prev[2]:
             baselines[sig] = (exp["name"], X_base, max(k_max, prev[2] if prev else 0))
 
-    # --- Random envelope -----------------------------------------------
+    # --- Random placements -----------------------------------------------
+    # Find the search mask
+    search_mask = xr.open_dataset(list(experiments[0]['dir'].glob("search_mask.nc"))[0])
     if sc.random_baseline:
         for label, X_base, k_max in baselines.values():
             base_rows, base_per_task = _score_random_baseline(
                 config, bundle, tl_config, model, dates, sc,
                 X_base_actual=X_base, k_max=k_max, label=label,
+                search_mask=search_mask
             )
             rows.extend(base_rows)
             per_task.extend(base_per_task)
@@ -267,7 +271,7 @@ def run_skill_curve(config, bundle, tl_config):
     agg = _aggregate(curve_df)
 
     results = _write_metrics_json(
-        config, sc, out_dir, dates, split_range,
+        config, sc, out_dir, dates, sc.eval_range,
         experiments, curve_df, agg, warnings_log,
     )
 
@@ -542,7 +546,7 @@ def _score_experiment(exp, config, bundle, tl_config, model, dates, sc):
         expected = list(range(len(greedy_iters)))
         if greedy_iters != expected:
             w = (f"Experiment '{name}' has non-contiguous greedy_iteration "
-                 f"{greedy_iters}: min_dist_between_sensors_km discarded "
+                 f"{greedy_iters}: min_dist_from_existing_km discarded "
                  f"picks post-hoc, so prefix k is 'sensors added', not "
                  f"'greedy's top-k'. Later picks were conditioned on sensors "
                  f"absent from this curve.")
@@ -598,7 +602,7 @@ Y_t_aux NaNs. Still outstanding from my previous message, and n_obs now gives yo
 
 def _score_random_baseline(
     config, bundle, tl_config, model, dates, sc,
-    X_base_actual: np.ndarray, k_max: int, label: str,
+    X_base_actual: np.ndarray, k_max: int, label: str, search_mask,
 ):
     """
     Random-placement envelope, matched to a greedy curve's starting network.
@@ -622,7 +626,10 @@ def _score_random_baseline(
 
     rows, per_task_rows = [], []
     dp = bundle["data_processor"]
-    mask = bundle["lakemask_sampling"]
+    if sc.random_mode == "augment":
+        mask = search_mask
+    else: # replace exisiting with random
+        mask = bundle["lakemask_sampling"]
 
     for seed in sc.random_seeds:
         print(f"    seed={seed}")
@@ -789,7 +796,6 @@ def _write_metrics_json(
         "lake": config.lake,
         "skill_curve_name": sc.name,
         "notes": sc.notes,
-        "split": sc.split,
         "split_range": [list(iv) for iv in split_range],
         "date_subsample_factor": sc.date_subsample_factor,
         "n_dates": int(len(dates)),
@@ -953,7 +959,7 @@ def _plot_skill_curve(config, curve_df, agg, sc, out_dir):
 
     fig.suptitle(
         f"{config.run.name} — {config.lake} — skill curve "
-        f"('{sc.name}', split={sc.split})",
+        f"('{sc.name}')",
         y=1.02,
     )
     fig.tight_layout()
