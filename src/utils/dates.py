@@ -25,6 +25,7 @@ def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stri
     if not intervals:
         return pd.DatetimeIndex([])
 
+    # TODO wire in months to drop
     factor = max(1, int(subsample_factor))
     pieces = []
     for start, end in intervals:

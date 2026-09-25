@@ -136,8 +136,13 @@ def gen_tasks(
             else:
                 N = n_context
 
+
+            # Now implemented to create the potential sampling mask on a per date basis dropping where sst==0.2(ice)
+            sst_mask = valid_mask_for_date(bundle['sst_anom_stand'], date)
+
             random_lake_points = generate_random_coordinates(
-                bundle["lakemask_sampling"],
+                # bundle["lakemask_sampling"],
+                sst_mask,
                 N=N,
                 data_processor=bundle["data_processor"],
                 rng=rng
@@ -192,13 +197,13 @@ def make_train_val_dates(config: PipelineConfig) -> tuple:
     train_dates = dates_from_intervals(tc.train_range, tc.train_date_stride)
     val_dates = dates_from_intervals(tc.val_range, tc.val_date_stride)
 
-    print(f"\nNow resolving train/val dates...")
-    if not tc.train_date_mode == 'random':
-        print(f"  train_range {tc.train_range} | mode={tc.train_date_mode}, "
-              f"stride={tc.train_date_stride} → {len(train_dates)} strided dates")
-    print(f"  training sampling is random. Dates chosen later per epoch")
-    print(f"  val_range   {tc.val_range} | stride={tc.val_date_stride} "
-          f"→ {len(val_dates)} dates")
+    # print(f"\nNow resolving train/val dates...")
+    # if not tc.train_date_mode == 'random':
+    #     print(f"  train_range {tc.train_range} | mode={tc.train_date_mode}, "
+    #           f"stride={tc.train_date_stride} → {len(train_dates)} strided dates")
+    # print(f"  training sampling is random. Dates chosen later per epoch")
+    # print(f"  val_range   {tc.val_range} | stride={tc.val_date_stride} "
+    #       f"→ {len(val_dates)} dates")
     return train_dates, val_dates
 
 
@@ -233,3 +238,14 @@ def make_train_date_sampler(config: PipelineConfig):
         return pool[np.sort(idx)]
 
     return sample_dates, pool, n
+
+
+def valid_mask_for_date(obj, date):
+    date = pd.Timestamp(date)
+    snap = obj.sel(time=date)
+    mask = snap.notnull().astype("int8")
+    mask = mask.assign_attrs(
+        description="1 = valid data, 0 = missing (NaN)",
+        source_time=str(np.datetime64(snap["time"].values)),
+    )
+    return mask

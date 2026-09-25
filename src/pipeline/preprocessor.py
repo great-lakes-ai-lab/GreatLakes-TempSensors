@@ -203,7 +203,8 @@ def _standardize_all(raw_datasets: dict, config: PipelineConfig) -> dict:
         if fill_values:
             print(f"    {name}: NaN-ing fill values {fill_values}")
         for fv in fill_values:
-            ds = ds.where(ds != fv, np.nan)
+            ds = ds.where(ds != np.float32(fv), np.nan)  # This to deal with the 0.2 Flag value in SST
+            # ds = ds.where(ds != fv, np.nan) # This was in place
 
         standardized[name] = ds
 
@@ -573,10 +574,10 @@ def _save_cache(config: PipelineConfig, bundle: dict):
     for name, obj in bundle.items():
         try:
             if isinstance(obj, xr.DataArray):
-                _clean_encoding(obj.to_dataset()).to_netcdf(processed_dir / f"{name}.nc")
+                obj_up = _clean_encoding(obj.to_dataset()).to_netcdf(processed_dir / f"{name}.nc")
                 saved_datasets.append(name)
             elif isinstance(obj, xr.Dataset):
-                _clean_encoding(obj).to_netcdf(processed_dir / f"{name}.nc")
+                obj_up = _clean_encoding(obj).to_netcdf(processed_dir / f"{name}.nc")
                 saved_datasets.append(name)
         except Exception as e:
             print(f"Error saving {name}: {e}")

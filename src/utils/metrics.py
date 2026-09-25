@@ -335,7 +335,7 @@ def compute_weighted_scores(
     Costs one extra forward pass component (model.std) per task, which is
     why the epoch loop keeps using compute_weighted_rmse.
     Point_sink: called once per scorable task as point_sink(task, lats, longs, means, true, std, w)
-    with all arrays 1-D of equal len, flitered to finite points. Lets callers accumulate spatial maps without
+    with all arrays 1-D of equal len, filtered to finite points. Lets callers accumulate spatial maps without
     rerunning model. Must not mutate it's arguments
     """
     dp = bundle["data_processor"]

@@ -53,7 +53,10 @@ def check_point_values(datasets: dict, test_points: list):
 
     for lat, lon in test_points:
         for name, ds in datasets.items():
+            print(f"name: {name}" )
             for var in ds.data_vars:
+                print(f"                var: {var}")
+                print(f"               coords: {ds.coords}")
                 da = ds[var]
                 if "time" in da.dims:
                     da = da.isel(time=0)

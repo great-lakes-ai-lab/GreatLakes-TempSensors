@@ -88,16 +88,53 @@ def main():
 
     # 5. Diagnostics (optional, can run standalone or alongside others)
     if "diagnostics" in stages:
+        raise ValueError("Diagnostics currently deprecated. Need to adjust for post processed coord names")
         from pipeline.diagnostics import run_diagnostics
         run_diagnostics(config, bundle)
         if stages == ["diagnostics"]:
             return
+
+
 
     # 6. Build TaskLoader (needed for train and predict)
     print("\n" + "=" * 60)
     print("BUILDING TASKS")
     print("=" * 60)
     tl_config = build_task_loader(config, bundle)
+
+    if 'model_preview' in stages:
+        from pipeline.preview import run_preview
+        run_preview(config, bundle, tl_config)
+
+        from utils.dates import dates_from_intervals
+        # Get a list of the # of train, val, and eval tasks
+
+        print("\n" + "=" * 60)
+        print("STAGE: PREVIEW")
+        print("=" * 60)
+        train_dates, val_dates = make_train_val_dates(config)
+        tc = config.training
+
+        print("Validation Task Sampling:")
+        print("With the current configuration there will be:")
+        print(f"              {len(val_dates)} validation tasks. Striding {tc.val_date_stride} days")
+        print(f"              first date: {val_dates[0].date()}, last date: {val_dates[-1].date()}")
+
+        print("\n" + "-" * 60)
+        print("Training Task Sampling:")
+        if tc.train_date_mode == "random":
+            date_sampler, _, _ = make_train_date_sampler(config)
+        else:
+            print(f"              {len(train_dates)} train tasks. Striding {tc.train_date_stride} days")
+
+        print("\n" + "-" * 60)
+        print("Evaluation Tasks")
+        ec = config.evaluation
+        eval_dates = dates_from_intervals(tc.test_range, ec.date_subsample_factor)
+        print(f"                 Evaluation will use {len(eval_dates)} dates. Striding {ec.date_subsample_factor} days ")
+        print(f"                  first date: {eval_dates[0].date()}, last date: {eval_dates[-1].date()}")
+        # Plot out what the receptive field looks like
+        model = build_model(config, bundle, tl_config.task_loader)
 
     # 7. Train
     if "train" in stages:
@@ -110,6 +147,8 @@ def main():
 
         print(f"Generating {len(val_dates)} validation tasks")
         # Should the N context be the same for all validation tasks?
+        # TODO Consider making flavors of context points (fully random, the active plus random, subset active + random, active only)
+        #   perhaps a percentage of tasks and flavor ie {random: 40, active + random: 30, active subset + random: 20, active only: 10}
         val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=False, n_context=tc.n_context_points)
 
         if tc.train_date_mode == "random":
@@ -149,6 +188,7 @@ def main():
             train_task_sampler = None
 
         model = build_model(config, bundle, tl_config.task_loader)
+        # TODO plot export of the model receptive field
         results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler)
 
 
@@ -213,6 +253,6 @@ if __name__ == "__main__":
         # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Erie_Eval_Pipeline_Modest/config_used.yaml",
         # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep16_yml_test/al_config_yml_test.yaml",
         # "--stage", "skill_curve",
-        # "--stage", "all"
+        "--stage", "model_preview"
     ]
     main()
