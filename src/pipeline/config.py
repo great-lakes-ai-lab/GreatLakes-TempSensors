@@ -156,26 +156,44 @@ class TrainingConfig:
     val_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
     test_range: list = field(default_factory=list)  # optional; required for `evaluate`
 
+    train_months_drop: list = field(default_factory=list)
+    val_months_drop: list = field(default_factory=list)
+    test_months_drop: list = field(default_factory=list)
+
     train_date_mode: str = "random"  # "strided" or "random"
     train_date_stride: int = 5  # mode=strided: min gap in days
     train_date_fraction: float = 0.05  # mode=random: fraction of daily pool per epoch
     n_train_dates_per_epoch: int = None  # mode=random: absolute override of fraction
     val_date_stride: int = 5  # val dates are always deterministic
 
-    n_epochs: int = 50
-    lr: float = 5e-5
-    internal_density: int = 250
-    patience: int = 0  # 0 = no early stopping
-
     n_context_points: int = 50
     vary_n_context: bool = True
-    min_n_context: int = 20
+    min_n_context: int = 5
     max_n_context: int = 75
+
+    active_geojson_path: str = None
+    train_tasks_fully_random: float = 0.4
+    train_tasks_active_plus_random: float = 0.3
+    train_tasks_subset_active_plus_random: float = 0.2
+    train_tasks_active_only: float = 0.1
 
     resample_tasks_per_epoch: bool = True
     train_task_seed: int = 100 # per-epoch seed = train_task_seed + epoch
     include_bathy_as_context: bool = False
     bathy_context_sampling: str = "random_lake_points"  # "all", "random_lake_points", or integer (e.g. 1000)
+
+    n_epochs: int = 50
+    lr: float = 5e-5
+    patience: int = 0  # 0 = no early stopping
+
+    internal_density: int = 250
+    n_unet_layers: int = 4
+    unet_kernel_size: int = 5
+    unet_channels: int = 64
+
+    internal_density_sweep: list = field(default_factory=lambda: [(50, 100, 200, 300, 500)])
+    n_unet_layer_sweep: list = field(default_factory=lambda: [(3, 4, 5, 6, 7)])
+    unet_kernel_size_sweeep: list = field(default_factory=lambda: [(3, 5, 7)])
 
 
 @dataclass
@@ -267,6 +285,7 @@ class ActiveLearningConfig:
 
     eval_range: list = field(default_factory=lambda: [("2021-01-01", "2021-12-31")])
     eval_subsample_factor: int = 14
+    al_months_drop: list = field(default_factory=list)
 
     n_new_sensors: int = 5
 
@@ -328,6 +347,7 @@ class SkillCurveConfig:
     # split: str = "test"
     eval_range: list = field(default_factory=lambda: [("2023-01-01", "2023-12-31")])
     date_subsample_factor: int = 30
+    sc_months_drop: list = field(default_factory=list)
 
     # Number of greedy picks to walk through. None -> all available.
     k_max: int = None
@@ -393,6 +413,7 @@ class SkillCurveConfig:
         if sm == "all":
             return set(range(k_max, 1))
         return {k for k in sm if 0 <= k <= k_max}
+
 
 @dataclass
 class PipelineConfig:

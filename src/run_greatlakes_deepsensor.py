@@ -106,36 +106,6 @@ def main():
         from pipeline.preview import run_preview
         run_preview(config, bundle, tl_config)
 
-        from utils.dates import dates_from_intervals
-        # Get a list of the # of train, val, and eval tasks
-
-        print("\n" + "=" * 60)
-        print("STAGE: PREVIEW")
-        print("=" * 60)
-        train_dates, val_dates = make_train_val_dates(config)
-        tc = config.training
-
-        print("Validation Task Sampling:")
-        print("With the current configuration there will be:")
-        print(f"              {len(val_dates)} validation tasks. Striding {tc.val_date_stride} days")
-        print(f"              first date: {val_dates[0].date()}, last date: {val_dates[-1].date()}")
-
-        print("\n" + "-" * 60)
-        print("Training Task Sampling:")
-        if tc.train_date_mode == "random":
-            date_sampler, _, _ = make_train_date_sampler(config)
-        else:
-            print(f"              {len(train_dates)} train tasks. Striding {tc.train_date_stride} days")
-
-        print("\n" + "-" * 60)
-        print("Evaluation Tasks")
-        ec = config.evaluation
-        eval_dates = dates_from_intervals(tc.test_range, ec.date_subsample_factor)
-        print(f"                 Evaluation will use {len(eval_dates)} dates. Striding {ec.date_subsample_factor} days ")
-        print(f"                  first date: {eval_dates[0].date()}, last date: {eval_dates[-1].date()}")
-        # Plot out what the receptive field looks like
-        model = build_model(config, bundle, tl_config.task_loader)
-
     # 7. Train
     if "train" in stages:
         print("\n" + "=" * 60)
@@ -188,7 +158,6 @@ def main():
             train_task_sampler = None
 
         model = build_model(config, bundle, tl_config.task_loader)
-        # TODO plot export of the model receptive field
         results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler)
 
 

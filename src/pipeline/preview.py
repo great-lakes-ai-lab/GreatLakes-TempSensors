@@ -4,6 +4,10 @@ import deepsensor
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import warnings
+from pathlib import Path
+
+from scipy.stats import kendalltau
+
 warnings.filterwarnings("ignore", module="cartopy.*")
 
 import cartopy.crs as ccrs
@@ -11,8 +15,8 @@ import cartopy.feature as cf
 
 from utils.dates import dates_from_intervals
 from pipeline.config import PipelineConfig
-from pipeline.model import build_model
 from pipeline.task_builder import make_train_val_dates, make_train_date_sampler
+
 
 from deepsensor.model import ConvNP
 
@@ -22,39 +26,49 @@ def run_preview(config: PipelineConfig, bundle: dict, tl_config):
     print("=" * 60)
     train_dates, val_dates = make_train_val_dates(config)
     tc = config.training
+    id_sweeps, n_layer_sweeps, kernel_sweep = config.training.internal_density_sweep, config.training.n_unet_layer_sweep, config.training.unet_kernel_size_sweeep
 
     print("Validation Task Sampling:")
     print("With the current configuration there will be:")
     print(f"              {len(val_dates)} validation tasks. Striding {tc.val_date_stride} days")
     print(f"              first date: {val_dates[0].date()}, last date: {val_dates[-1].date()}")
+    print(f"              Tasks dropped from these months: {tc.val_months_drop}")
 
     print("\n" + "-" * 60)
     print("Training Task Sampling:")
     if tc.train_date_mode == "random":
         date_sampler, _, _ = make_train_date_sampler(config)
+        print(f"              first date in pool: {train_dates[0].date()}, last date in pool: {train_dates[-1].date()}")
     else:
         print(f"              {len(train_dates)} train tasks. Striding {tc.train_date_stride} days")
+        print(f"              first date: {train_dates[0].date()}, last date: {train_dates[-1].date()}")
+    print(f"              Tasks dropped from these months: {tc.train_months_drop}")
 
     print("\n" + "-" * 60)
     print("Evaluation Tasks")
     ec = config.evaluation
-    eval_dates = dates_from_intervals(tc.test_range, ec.date_subsample_factor)
+    eval_dates = dates_from_intervals(tc.test_range, ec.date_subsample_factor, months_to_drop=tc.test_months_drop)
     print(f"                 Evaluation will use {len(eval_dates)} dates. Striding {ec.date_subsample_factor} days ")
     print(f"                  first date: {eval_dates[0].date()}, last date: {eval_dates[-1].date()}")
-    model = build_model(config, bundle, tl_config.task_loader)
-    # TODO: Bring in range of model params as hyperparams and generate plot for each and save to folder
+    print(f"              Tasks dropped from these months: {tc.test_months_drop}")
+
     # TODO: Go back to chat and https://umgpt.umich.edu/conversations/4480410 and get add some caclutions for adjusting the params
     #   what is the spatial resolution of GLSEA3, how many row and cols in the data extent -> what's an appropriate internal density
-    model = ConvNP(
-        bundle["data_processor"],
-        tl_config.task_loader,
-        internal_density=250,
-        unet_channels=(64,) * 4,
-        unet_kernels = 5
-    )
-    rf_fig = _make_rf_plot(bundle=bundle, model=model, scale="50m")
-    rf_fig.show()
 
+    out_dir = Path(config.paths.run_dir) / "preview"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for idens in id_sweeps:
+        for nl in n_layer_sweeps:
+            for ks in kernel_sweep:
+                print(f"Internal Density: {idens}, n Layers: {nl}, "
+        f"kernel size: {ks}")
+                model = ConvNP(bundle["data_processor"], tl_config.task_loader, internal_density=idens, unet_channels=(64,) * nl, unet_kernels = ks)
+                try:
+                    rf_fig = _make_rf_plot(config=config, bundle=bundle, model=model,internal_d=idens, n_layers=nl, kernel_size=ks, out_dir=out_dir, scale="50m")
+                    # rf_fig.show()
+                except Exception as e:
+                    print(f"An error occurred making the plot: {e}")
 
 
 def _get_extent(ds, lon_name="lon", lat_name="lat"):
@@ -97,7 +111,7 @@ def _get_patch(data_processor, receptive_field, extent, crs):
     return patch
 
 
-def _make_rf_plot(bundle, model, scale="50m"):
+def _make_rf_plot(config, bundle, model, internal_d, n_layers, kernel_size, out_dir, scale="10m"):
     crs = ccrs.PlateCarree()
     extent = _get_extent(bundle["lakemask_sampling"])
     patch = _get_patch(
@@ -153,6 +167,24 @@ def _make_rf_plot(bundle, model, scale="50m"):
     gl.top_labels = False
     gl.right_labels = False
 
-    # TODO add model params to plt title
+    title_text = (
+        f"Internal Density: {internal_d}, n Layers: {n_layers}, "
+        f"kernel size: {kernel_size}"
+    )
+    fig.subplots_adjust(top=0.88)
+
+    fig.text(
+        0.5,
+        0.96,
+        title_text,
+        ha="center",
+        va="top",
+        fontsize=14,
+        color="black",
+    )
+
+    # fig.tight_layout()
+    fig.savefig(out_dir / f"rf_plot_id_{internal_d}_nl_{n_layers}_ks_{kernel_size}.png")
+    # _finish_plot(config, out_dir / f"rf_plot_id_{internal_d}_nl_{n_layers}_ks_{kernel_size}.png")
 
     return fig

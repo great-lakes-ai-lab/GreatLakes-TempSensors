@@ -53,7 +53,7 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
     split = split or ec.split
 
     split_range = _resolve_split_range(config, split)
-    dates = dates_from_intervals(split_range, ec.date_subsample_factor)
+    dates = dates_from_intervals(split_range, ec.date_subsample_factor, config.training.test_months_drop)
 
     if len(dates) == 0:
         raise ValueError(f"No dates resolved from {split}_range={split_range}")

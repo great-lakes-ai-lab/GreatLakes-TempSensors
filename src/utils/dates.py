@@ -4,7 +4,7 @@
 import pandas as pd
 
 
-def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stride: bool = True):
+def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stride: bool = True, months_to_drop=None):
     """
     Build a normalized DatetimeIndex from a list of (start, end) intervals.
 
@@ -17,6 +17,8 @@ def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stri
     per_interval_stride : bool
         If True, stride is applied within each interval (each block represented,
         avoids phase artifacts). If False, intervals are concatenated then strided.
+    months_to_drop : list[int] | None
+        Months numbers (1-12) to exclude
 
     Returns
     -------
@@ -25,11 +27,17 @@ def dates_from_intervals(intervals, subsample_factor: int = 1, per_interval_stri
     if not intervals:
         return pd.DatetimeIndex([])
 
-    # TODO wire in months to drop
+    months_to_drop = set(months_to_drop or [])
+    invalid_months = months_to_drop.difference(range(1, 13))
+    if invalid_months:
+        raise ValueError(f" months should be integers between 1-12. "
+                         f" invlaid values in: {sorted(invalid_months)}")
     factor = max(1, int(subsample_factor))
     pieces = []
     for start, end in intervals:
         block = pd.date_range(start, end, freq="D")
+        if months_to_drop:
+            block = block[~block.month.isin(months_to_drop)]
         if per_interval_stride:
             block = block[::factor]
         pieces.append(block)

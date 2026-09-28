@@ -600,6 +600,7 @@ def _load_geojson_context(al_cfg, bundle) -> np.ndarray:
 
     return normalized_points
 
+
 def save_context_points(
     context_points: np.ndarray,
     bundle: dict,
@@ -676,7 +677,7 @@ def save_context_points(
 
 def make_active_learning_dates(config):
     al_cfg = config.active_learning
-    return dates_from_intervals(al_cfg.eval_range, al_cfg.eval_subsample_factor)
+    return dates_from_intervals(al_cfg.eval_range, al_cfg.eval_subsample_factor, months_to_drop=al_cfg.al_months_drop)
 
 
 # ---------------------------------------------------------------------

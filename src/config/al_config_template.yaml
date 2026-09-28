@@ -37,6 +37,7 @@ active_learning:
 
   eval_range: [["2021-06-01", "2022-08-31"]]   # Andersson used the validation period
   eval_subsample_factor: 15
+  al_months_drop: []
 
   n_new_sensors: 3
 
@@ -105,6 +106,7 @@ skill_curve:
   al_experiments: []     # [] -> auto-discover
   eval_range: [["2023-06-01", "2023-6-30"]]  # Andersson used the test period
   date_subsample_factor: 7
+  sc_months_drop: []
 
   k_max: null                    # null -> all recommendations
   random_baseline: true

@@ -129,7 +129,7 @@ def gen_tasks(
     for date in tqdm(dates, disable=not progress, desc="Generating tasks"):
         # Determine context points for this task
         if fixed_context_points is not None:
-            random_lake_points = fixed_context_points
+            context_points = fixed_context_points
         else:
             if vary_n_context:
                 N = int(rng.integers(min_n, max_n))
@@ -140,7 +140,7 @@ def gen_tasks(
             # Now implemented to create the potential sampling mask on a per date basis dropping where sst==0.2(ice)
             sst_mask = valid_mask_for_date(bundle['sst_anom_stand'], date)
 
-            random_lake_points = generate_random_coordinates(
+            context_points = generate_random_coordinates(
                 # bundle["lakemask_sampling"],
                 sst_mask,
                 N=N,
@@ -152,7 +152,7 @@ def gen_tasks(
         context_sampling = []
         for strategy in tl_config.context_sampling_map:
             if strategy == "random_lake_points":
-                context_sampling.append(random_lake_points)
+                context_sampling.append(context_points)
             elif strategy == "all":
                 context_sampling.append("all")
             else:
@@ -194,8 +194,8 @@ def make_train_val_dates(config: PipelineConfig) -> tuple:
     serve only as a fallback/reference when mode='random'.
     """
     tc = config.training
-    train_dates = dates_from_intervals(tc.train_range, tc.train_date_stride)
-    val_dates = dates_from_intervals(tc.val_range, tc.val_date_stride)
+    train_dates = dates_from_intervals(tc.train_range, tc.train_date_stride, months_to_drop=tc.train_months_drop)
+    val_dates = dates_from_intervals(tc.val_range, tc.val_date_stride, months_to_drop=tc.train_months_drop)
 
     # print(f"\nNow resolving train/val dates...")
     # if not tc.train_date_mode == 'random':
@@ -215,7 +215,7 @@ def make_train_date_sampler(config: PipelineConfig):
     Returns (sampler, pool, n_per_epoch).
     """
     tc = config.training
-    pool = dates_from_intervals(tc.train_range, subsample_factor=1)
+    pool = dates_from_intervals(tc.train_range, subsample_factor=1, months_to_drop=tc.train_months_drop)
 
     if len(pool) == 0:
         raise ValueError(f"train_range produced no dates: {tc.train_range}")

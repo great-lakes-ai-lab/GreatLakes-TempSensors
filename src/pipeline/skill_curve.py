@@ -187,7 +187,7 @@ def run_skill_curve(config, bundle, tl_config):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # split_range = _resolve_split_range(config, sc.split)
-    dates = dates_from_intervals(sc.eval_range, sc.date_subsample_factor)
+    dates = dates_from_intervals(sc.eval_range, sc.date_subsample_factor, sc.sc_months_drop)
     if len(dates) == 0:
         raise ValueError(
             f"No dates resolved from range={sc.eval_range} "
