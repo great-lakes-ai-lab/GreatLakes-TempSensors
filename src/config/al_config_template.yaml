@@ -1,4 +1,4 @@
-# src/config/al_config_template.yaml
+# src/config/al_config_sep30.yaml
 # ─────────────────────────────────────────────────────────────────────────────
 # Active Learning experiment config (thin overlay).
 #
@@ -72,6 +72,11 @@ active_learning:
   min_dist_from_existing_km: 5.0
   exclusion_points_path: null
   min_dist_from_exclusion_km: 10.0
+
+  # Masking parameters
+  # TODO: wire these in to update AL masks. APPLY TO X_c_mask (What locations are possible) and/or X_t_mask (We care about predictions)?
+  min_shore_dist: 0.0
+  min_depth: 0.0
 
   # Outputs
   save_acquisition_surface: true

@@ -171,11 +171,12 @@ class TrainingConfig:
     min_n_context: int = 5
     max_n_context: int = 75
 
-    active_geojson_path: str = None
+    active_buoy_points_path: str = None
     train_tasks_fully_random: float = 0.4
     train_tasks_active_plus_random: float = 0.3
     train_tasks_subset_active_plus_random: float = 0.2
     train_tasks_active_only: float = 0.1
+    train_tasks_per_date: float = 1.0
 
     resample_tasks_per_epoch: bool = True
     train_task_seed: int = 100 # per-epoch seed = train_task_seed + epoch
@@ -194,6 +195,15 @@ class TrainingConfig:
     internal_density_sweep: list = field(default_factory=lambda: [(50, 100, 200, 300, 500)])
     n_unet_layer_sweep: list = field(default_factory=lambda: [(3, 4, 5, 6, 7)])
     unet_kernel_size_sweeep: list = field(default_factory=lambda: [(3, 5, 7)])
+
+    @property
+    def task_ratios(self) -> dict:
+        return {
+            "fully_random": self.train_tasks_fully_random,
+            "active_plus_random": self.train_tasks_active_plus_random,
+            "subset_active_plus_random": self.train_tasks_subset_active_plus_random,
+            "active_only": self.train_tasks_active_only,
+        }
 
 
 @dataclass
@@ -288,15 +298,6 @@ class ActiveLearningConfig:
     al_months_drop: list = field(default_factory=list)
 
     n_new_sensors: int = 5
-
-    # Supported acquistion function options:
-    #
-    # Sequential (non-parallel):
-    #   mean_stddev, mean_variance, mean_marginal_entropy, joint_entropy,
-    #   p_norm_stddev, oracle_rmse, oracle_mae, oracle_marginal_nll, oracle_joint_nll
-    #
-    # Parallel:
-    #   stddev, context_dist, expected_improvement, random
     acquisition_function: str = "mean_stddev"
 
     # Parameters for specific acquisition functions
@@ -322,12 +323,19 @@ class ActiveLearningConfig:
     candidate_coarsen_factor: int = 4
     target_coarsen_factor: int = 4
 
-    # Placement constraints
-    min_dist_from_existing_km: float = 0.0
-    min_dist_from_exclusion_km: float = 0.0
+    # Search Placement constraints
+    min_dist_from_existing_km_search: float = 0.0
+    min_dist_from_exclusion_km_search: float = 0.0
+    exclusion_points_path_search: str = None
+    min_shore_dist_search: float = 0.0
+    min_depth_search: float = 0.0
 
-    # Future hook for existing buoy locations
-    exclusion_points_path: str = None
+    # Target Surface constraints
+    min_dist_from_existing_km_target: float = 0.0
+    min_dist_from_exclusion_km_target: float = 0.0
+    exclusion_points_path_target: str = None
+    min_shore_dist_target: float = 0.0
+    min_depth_target: float = 0.0
 
     # Outputs
     save_acquisition_surface: bool = True
@@ -811,7 +819,7 @@ def load_al_config(al_config_path: str) -> PipelineConfig:
     # 9. Re-validate (paths exist at new locations, dates sane, writability)
     config.validate()
 
-    # Stash the AL config source path so run_active_learning can archive it (Decision 5)
+    # Stash the AL config source path so run_active_learning can archive it
     config._al_config_source_path = str(al_path)
 
     return config

@@ -149,6 +149,14 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     # Add pre-DataProcessor datasets
     bundle.update(pre_dp_datasets)
 
+    # Add in pre DP bathy and dist for AL masking
+    for v in [('bathy', 'bathy_pre_dp'), ('dist_to_land', 'dist_to_land_pre_dp')]:
+        if v[0] in standardized:
+            bundle.update({v[1]: v[0]})
+
+    # pre_bathy = {'bathy_pre_dp': standardized['bathy'], 'dist_to_land_pre_dp': standardized['dist_to_land']}
+    # bundle.update(pre_bathy)
+
     # 9. Save
     _save_cache(config, bundle)
 

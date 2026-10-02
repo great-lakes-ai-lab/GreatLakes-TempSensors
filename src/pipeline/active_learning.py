@@ -2,6 +2,7 @@
 """Active learning / sensor placement for Great Lakes DeepSensor pipeline."""
 
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 import pandas as pd
@@ -103,15 +104,12 @@ def run_active_learning(config, bundle, tl_config):
     print(f"  Search grid shape: {search_grid.shape}")
     print(f"  Target grid shape: {target_grid.shape}")
 
-    # 7. Optionally update the mask with minimum distances from existing or exclusion
-    exclusion_points = load_exclusion_points(al_cfg.exclusion_points_path)
-    if al_cfg.min_dist_from_existing_km > 0.0:
-        fixed_context_points = load_exclusion_points(al_cfg.context_geojson_path)
-    search_mask = mask_near_points(mask=search_mask, points=exclusion_points, min_dist_km=al_cfg.min_dist_from_exclusion_km,
-                                   points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km)
     # Save the search mask to get used in skill_curve.py
     search_mask_path = output_dir / "search_mask.nc"
     search_mask.to_netcdf(search_mask_path)
+
+    target_mask_path = output_dir / "target_mask.nc"
+    target_mask.to_netcdf(target_mask_path)
 
     n_valid_candidates = int(search_mask.sum())
     assert al_cfg.n_new_sensors < n_valid_candidates, (
@@ -143,13 +141,13 @@ def run_active_learning(config, bundle, tl_config):
     )
 
     # 9. Post-processing: enforce minimum distance. DISCOURAGED FROM USING THIS. IT BREAKS THE SEQUENTIAL
-    # SLATED TO MOVE OUT
-    if al_cfg.min_dist_from_existing_km > 0:
-        X_new_df = enforce_min_distance(
-            X_new_df,
-            min_dist_km=al_cfg.min_dist_from_existing_km,
-            model=model,
-        )
+    # SLATED TO MOVE OUT. N
+    # if al_cfg.min_dist_from_existing_km > 0:
+    #     X_new_df = enforce_min_distance(
+    #         X_new_df,
+    #         min_dist_km=al_cfg.min_dist_from_existing_km,
+    #         model=model,
+    #     )
 
     # 10. Save outputs
     save_recommended_locations(X_new_df, model, output_dir, config)
@@ -236,8 +234,16 @@ def _save_al_config(config, output_dir: Path):
         "diff": al_cfg.diff,
         "candidate_coarsen_factor": al_cfg.candidate_coarsen_factor,
         "target_coarsen_factor": al_cfg.target_coarsen_factor,
-        "min_dist_from_existing_km": al_cfg.min_dist_from_existing_km,
-        "exclusion_points_path": al_cfg.exclusion_points_path,
+        "min_dist_from_existing_km_search": al_cfg.min_dist_from_existing_km_search,
+        "exclusion_points_path_search": al_cfg.exclusion_points_path_search,
+        "min_dist_from_exclusion_km_search": al_cfg.min_dist_from_exclusion_km_search,
+        "min_shore_dist_search": al_cfg.min_shore_dist_search,
+        "min_depth_search": al_cfg.min_depth_search,
+        "min_dist_from_existing_km_target": al_cfg.min_dist_from_existing_km_target,
+        "exclusion_points_path_target": al_cfg.exclusion_points_path_target,
+        "min_dist_from_exclusion_km_target": al_cfg.min_dist_from_exclusion_km_target,
+        "min_shore_dist_target": al_cfg.min_shore_dist_target,
+        "min_depth_target": al_cfg.min_depth_target,
         "run_name": config.run.name,
         "lake": config.lake,
         "model_dir": config.paths.model_dir,
@@ -326,7 +332,6 @@ def load_points_from_geojson(path) -> tuple:
 
     _validate_wgs84_arrays(lats, lons, str(path))
 
-    print(f"  Loaded {len(lats)} points from GeoJSON: {path}")
     return lats, lons
 
 
@@ -583,22 +588,48 @@ def _generate_random_context(al_cfg, bundle) -> np.ndarray:
     return points
 
 
+# def _load_geojson_context(al_cfg, bundle) -> np.ndarray:
+#     """
+#     Load context points from a GeoJSON file and normalize to model coordinates.
+#
+#     Expects Point features in WGS84.
+#     """
+#     lats, lons = load_points_from_geojson(al_cfg.context_geojson_path)
+#
+#     # Stack as (2, N) in raw coordinates [lat, lon]
+#     raw_points = np.array([lats, lons])
+#
+#     # Normalize to model coordinate space
+#     data_processor = bundle["data_processor"]
+#     normalized_points = data_processor.map_coord_array(raw_points, unnorm=False)
+#
+#     return normalized_points
+
 def _load_geojson_context(al_cfg, bundle) -> np.ndarray:
+    """Backwards-compatible wrapper: pulls the path off an active-learning config."""
+    return load_context_points(al_cfg.context_geojson_path, bundle)
+
+
+def load_context_points(geojson_path, bundle) -> np.ndarray:
     """
     Load context points from a GeoJSON file and normalize to model coordinates.
 
     Expects Point features in WGS84.
+
+    Parameters
+    ----------
+    geojson_path : str or Path
+    bundle : dict
+        Processed bundle (needs 'data_processor')
+
+    Returns
+    -------
+    np.ndarray, shape (2, N)
+        Row 0 = x1 (lat), row 1 = x2 (lon), normalized.
     """
-    lats, lons = load_points_from_geojson(al_cfg.context_geojson_path)
-
-    # Stack as (2, N) in raw coordinates [lat, lon]
+    lats, lons = load_points_from_geojson(geojson_path)
     raw_points = np.array([lats, lons])
-
-    # Normalize to model coordinate space
-    data_processor = bundle["data_processor"]
-    normalized_points = data_processor.map_coord_array(raw_points, unnorm=False)
-
-    return normalized_points
+    return bundle["data_processor"].map_coord_array(raw_points, unnorm=False)
 
 
 def save_context_points(
@@ -881,6 +912,50 @@ def make_spatial_template(ds_or_da):
     return da
 
 
+def build_bathy_dist_mask(
+    base_grid: Union[xr.DataArray, xr.Dataset],
+    bathy: xr.DataArray,
+    dist: xr.DataArray,
+    depth_tsh: float,
+    dist_tsh: float,
+) -> xr.DataArray:
+    """Construct a unified boolean mask from bathymetry and distance thresholds,
+    regridded onto base_grid's coordinates and shape.
+
+    Args:
+        base_grid (xr.DataArray | xr.Dataset):
+            Reference grid defining the target shape/coordinates for the
+            output mask.
+        bathy (xr.DataArray):
+            Bathymetry (depth) values. Must share the same shape and
+            coordinates as ``dist``.
+        dist (xr.DataArray):
+            Distance values. Must share the same shape and coordinates as
+            ``bathy``.
+        depth_tsh (float):
+            Depth threshold. Values <= depth_tsh become False, else True.
+        dist_tsh (float):
+            Distance threshold. Values <= dist_tsh become False, else True.
+
+    Returns:
+        xr.DataArray:
+            Boolean mask with the same shape and coordinates as ``base_grid``.
+    """
+    if bathy.shape != dist.shape:
+        raise ValueError(
+            f"`bathy` and `dist` must have the same shape, got "
+            f"{bathy.shape} and {dist.shape}"
+        )
+
+    bathy_mask = bathy > depth_tsh
+    dist_mask = dist > dist_tsh
+    unified_mask = bathy_mask.squeeze() & dist_mask.squeeze()
+    unified_mask_on_base = unified_mask.astype("int8").interp_like(base_grid, method="nearest")
+    unified_mask_on_base = unified_mask_on_base.astype(bool)
+
+    return unified_mask_on_base
+
+
 def make_lake_mask_from_target(ds_or_da):
     """
     Build a boolean lake mask from valid target pixels.
@@ -952,17 +1027,34 @@ def build_grids_and_masks(bundle, config, acq_fn):
     For parallel acquisition functions, X_s == X_t (same grid).
     For sequential acquisition functions, X_s can be coarser than X_t.
     """
+    # TODO: This could use a cleaner flow considering that if parallel then search == target and there's no point loading/running a few lines but it's innocent and low priority
     print("\nNow building search/target grids and masks...")
     al_cfg = config.active_learning
 
     # Start from the full pre-DP target grid
-    target_grid_full = get_pre_dp_target_grid(bundle, config)
-    base_grid = make_spatial_template(target_grid_full)
-    base_mask = make_lake_mask_from_target(target_grid_full)
+    base_grid_full = get_pre_dp_target_grid(bundle, config)
+    base_grid = make_spatial_template(base_grid_full)
+    bathy = bundle['bathy_pre_dp'].to_dataarray()  # Going to assume bathy is always there
 
-    # is_parallel = al_cfg.acquisition_function.lower() in [
-    #     "stddev", "std", "mean_variance", "mean_var",
-    # ]
+    if 'dist_to_land_pre_dp' in bundle:     # TODO: at some point maybe this can draw from the dist path and spatial slice for if dist to land wasn't chosen as context input
+        dist = bundle['dist_to_land_pre_dp'].to_dataarray()
+        search_mask = build_bathy_dist_mask(base_grid=base_grid, bathy=bathy, dist=dist, depth_tsh=al_cfg.min_depth_search, dist_tsh=al_cfg.min_shore_dist_search)
+        target_mask = build_bathy_dist_mask(base_grid=base_grid, bathy=bathy, dist=dist, depth_tsh=al_cfg.min_depth_target, dist_tsh=al_cfg.min_shore_dist_target)
+    else:
+        search_mask = build_bathy_dist_mask(base_grid=base_grid, bathy=bathy, dist=bathy, depth_tsh=al_cfg.min_depth_search, dist_tsh=al_cfg.min_depth_search)
+        target_mask = build_bathy_dist_mask(base_grid=base_grid, bathy=bathy, dist=bathy, depth_tsh=al_cfg.min_depth_target, dist_tsh=al_cfg.min_depth_target) # Just use bathy threshold twice. Hack for now
+
+    search_exclusion_points = load_points_from_file(al_cfg.exclusion_points_path_search)
+    fixed_context_points = load_points_from_file(al_cfg.context_geojson_path)
+    search_mask = mask_near_points(mask=search_mask, points=search_exclusion_points,
+                                   min_dist_km=al_cfg.min_dist_from_exclusion_km_search,
+                                   points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km_search)
+
+    target_exclusion_points = load_points_from_file(al_cfg.exclusion_points_path_target)
+    target_mask = mask_near_points(mask=target_mask, points=target_exclusion_points,
+                                   min_dist_km=al_cfg.min_dist_from_exclusion_km_target,
+                                   points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km_target)
+
     is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
 
     if is_parallel:
@@ -979,14 +1071,13 @@ def build_grids_and_masks(bundle, config, acq_fn):
             )
         coarsen = candidate
         if coarsen > 1:
-            grid = coarsen_spatial(base_grid, coarsen)
-            mask = coarsen_mask(base_mask, coarsen)
-        else:
-            grid = base_grid
-            mask = base_mask
+            base_grid = coarsen_spatial(base_grid, coarsen)
+            search_mask = coarsen_mask(search_mask, coarsen)
+            # target_mask = coarsen_mask(target_mask, coarsen)
+
         return {
-            "search_grid": grid, "search_mask": mask,
-            "target_grid": grid, "target_mask": mask,
+            "search_grid": base_grid, "search_mask": search_mask,
+            "target_grid": base_grid, "target_mask": search_mask,
         }
     else:
         # Sequential: X_s can be coarser than X_t
@@ -995,19 +1086,17 @@ def build_grids_and_masks(bundle, config, acq_fn):
 
         if target_coarsen > 1:
             target_grid = coarsen_spatial(base_grid, target_coarsen)
-            target_mask = coarsen_mask(base_mask, target_coarsen)
+            target_mask = coarsen_mask(target_mask, target_coarsen)
         else:
             target_grid = base_grid
-            target_mask = base_mask
+            target_mask = target_mask
 
         if candidate_coarsen > 1:
             search_grid = coarsen_spatial(base_grid, candidate_coarsen)
-            search_mask = coarsen_mask(base_mask, candidate_coarsen)
+            search_mask = coarsen_mask(search_mask, candidate_coarsen)
         else:
             search_grid = base_grid
-            search_mask = base_mask
-
-
+            search_mask = search_mask
 
         return {
             "search_grid": search_grid,
@@ -1021,7 +1110,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
 # Distance masking
 # ---------------------------------------------------------------------
 
-def load_exclusion_points(path) -> list:
+def load_points_from_file(path) -> list:
     """
     Load existing sensor locations from CSV or GeoJSON.
 
@@ -1044,6 +1133,7 @@ def load_exclusion_points(path) -> list:
         )
 
     return list(zip(lats.tolist(), lons.tolist()))
+
 
 def mask_near_points(
     mask: xr.DataArray,

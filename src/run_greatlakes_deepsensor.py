@@ -116,9 +116,6 @@ def main():
         # print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
 
         print(f"Generating {len(val_dates)} validation tasks")
-        # Should the N context be the same for all validation tasks?
-        # TODO Consider making flavors of context points (fully random, the active plus random, subset active + random, active only)
-        #   perhaps a percentage of tasks and flavor ie {random: 40, active + random: 30, active subset + random: 20, active only: 10}
         val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=False, n_context=tc.n_context_points)
 
         if tc.train_date_mode == "random":
@@ -135,6 +132,8 @@ def main():
                 tasks = gen_tasks(
                     tl_config, dates_ep, bundle, config,
                     seed=derive_rng(tc.train_task_seed, epoch, "context"),
+                    task_ratios=tc.task_ratios,
+                    tasks_per_date=tc.train_tasks_per_date,
                     progress=False, verbose=False,
                 )
                 if not tasks:
@@ -218,10 +217,10 @@ if __name__ == "__main__":
 
     sys.argv = [
         "run_greatlakes_deepsensor.py",
-        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
         # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Erie_Eval_Pipeline_Modest/config_used.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep16_yml_test/al_config_yml_test.yaml",
+        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep30_small_model_for_AL_mask/al_config_sep30.yaml",
         # "--stage", "skill_curve",
-        "--stage", "model_preview"
+        "--stage", "active_learning"
     ]
     main()

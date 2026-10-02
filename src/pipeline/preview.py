@@ -167,15 +167,17 @@ def _make_rf_plot(config, bundle, model, internal_d, n_layers, kernel_size, out_
     gl.top_labels = False
     gl.right_labels = False
 
+    n_params = f"{deepsensor.backend.nps.num_params(model.model):,}"
+
     title_text = (
         f"Internal Density: {internal_d}, n Layers: {n_layers}, "
-        f"kernel size: {kernel_size}"
+        f"kernel size: {kernel_size}, N Parameters: {n_params}"
     )
-    fig.subplots_adjust(top=0.88)
+    fig.subplots_adjust(top=0.99)
 
     fig.text(
         0.5,
-        0.96,
+        0.94,
         title_text,
         ha="center",
         va="top",
