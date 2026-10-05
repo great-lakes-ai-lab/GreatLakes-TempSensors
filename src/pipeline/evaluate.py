@@ -53,7 +53,7 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
     split = split or ec.split
 
     split_range = _resolve_split_range(config, split)
-    dates = dates_from_intervals(split_range, ec.date_subsample_factor, config.training.test_months_drop)
+    dates = dates_from_intervals(intervals=split_range, subsample_factor=ec.date_subsample_factor, months_to_drop=config.training.test_months_drop)
 
     if len(dates) == 0:
         raise ValueError(f"No dates resolved from {split}_range={split_range}")
@@ -73,6 +73,8 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
 
     sweep_rows = []
     all_per_task = []
+
+    # TODO: Should this respect the validation sampling strategy mode?
 
     for n_context in ec.n_context_sweep:
         for seed in ec.seeds:

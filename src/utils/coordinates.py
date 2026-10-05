@@ -112,6 +112,8 @@ def generate_random_coordinates(mask_da, N, data_processor=None, rng=None):
 
     n_valid = valid_indices.shape[0]
 
+    # TODO: Put this in a try/except, print out or log if date is skipped
+    #   Will have issues validating winter full ice conditions
     if N > n_valid:
         raise ValueError(
             f"generate_random_coordinates: requested N={N} points but the "

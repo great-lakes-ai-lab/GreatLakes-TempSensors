@@ -218,8 +218,8 @@ if __name__ == "__main__":
     sys.argv = [
         "run_greatlakes_deepsensor.py",
         # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Erie_Eval_Pipeline_Modest/config_used.yaml",
-        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep30_small_model_for_AL_mask/al_config_sep30.yaml",
+        "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Oct5_Erie_Strong/al_config.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep30_small_model_for_AL_mask/al_config_sep30.yaml",
         # "--stage", "skill_curve",
         "--stage", "active_learning"
     ]

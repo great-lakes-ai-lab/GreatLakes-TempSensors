@@ -112,6 +112,11 @@ def run_active_learning(config, bundle, tl_config):
     target_mask.to_netcdf(target_mask_path)
 
     n_valid_candidates = int(search_mask.sum())
+    print(f"Search grid: {n_valid_candidates} cells to be evaluated")
+    if isinstance(acquisition_fn, AcquisitionFunctionParallel):
+        print(f"Will compute {al_cfg.n_new_sensors * len(al_dates)} tasks")
+    else:
+        print(f"Will compute {al_cfg.n_new_sensors * len(al_dates) * n_valid_candidates} tasks")
     assert al_cfg.n_new_sensors < n_valid_candidates, (
         f"n_new_sensors ({al_cfg.n_new_sensors}) >= valid masked candidates "
         f"({n_valid_candidates}). Reduce n_new_sensors or use a finer search grid."
@@ -950,7 +955,7 @@ def build_bathy_dist_mask(
     bathy_mask = bathy > depth_tsh
     dist_mask = dist > dist_tsh
     unified_mask = bathy_mask.squeeze() & dist_mask.squeeze()
-    unified_mask_on_base = unified_mask.astype("int8").interp_like(base_grid, method="nearest")
+    unified_mask_on_base = unified_mask.astype("int8").interp_like(base_grid, method="nearest", kwargs={"fill_value": 0})
     unified_mask_on_base = unified_mask_on_base.astype(bool)
 
     return unified_mask_on_base
@@ -995,7 +1000,7 @@ def coarsen_mask(mask, factor: int):
     coarse = (
         mask_float
         .coarsen({lat_name: factor, lon_name: factor}, boundary="trim")
-        .max()
+        .min()
     )
 
     return coarse > 0.5

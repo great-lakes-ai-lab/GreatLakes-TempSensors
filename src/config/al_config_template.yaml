@@ -13,7 +13,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Path to the training run directory (must contain config_used.yaml + model/).
-run_ref: ~/dev/deepsensor_projects/runs/run04_michigan
+run_ref: ~/dev/deepsensor_projects/runs/path_to_run_dir
 
 # Path re-resolution for HPC → local moves. Point output_root at where the runs
 # now live; all subpaths (model_dir, data_processor_dir, etc.) are re-derived
@@ -35,11 +35,11 @@ active_learning:
   name: template
   notes: "the template with defaults"
 
-  eval_range: [["2021-06-01", "2022-08-31"]]   # Andersson used the validation period
-  eval_subsample_factor: 15
+  eval_range: [["2024-06-01", "2024-08-31"]]   # Andersson used the validation period
+  eval_subsample_factor: 10
   al_months_drop: []
 
-  n_new_sensors: 3
+  n_new_sensors: 5
 
   # Sequential: mean_stddev, mean_variance, mean_marginal_entropy, joint_entropy,
   #             p_norm_stddev, oracle_* | Parallel: stddev, context_dist, ei, random
@@ -68,15 +68,20 @@ active_learning:
   candidate_coarsen_factor: 1
   target_coarsen_factor: 1
 
-  # Placement constraints
-  min_dist_from_existing_km: 5.0
-  exclusion_points_path: null
-  min_dist_from_exclusion_km: 10.0
+  # Search/Candidate Placement constraints (what are locations can be considered for a new buoy)
+  min_dist_from_existing_km_search: 5.0  # Applied to points in the context geojson path
+  exclusion_points_path_search: /Users/jagraha/dev/deepsensor_projects/data/buoy/pretend_locations/erie_exclustion.geojson
+  min_dist_from_exclusion_km_search: 10.0  # Applied to points in the exclusion points path
+  min_shore_dist_search: 0.5  # Applied to the distance from land layer (must be included as context)
+  min_depth_search: 5.0  # Applies to bathymetry (Must be incldued as context)
 
-  # Masking parameters
-  # TODO: wire these in to update AL masks. APPLY TO X_c_mask (What locations are possible) and/or X_t_mask (We care about predictions)?
-  min_shore_dist: 0.0
-  min_depth: 0.0
+  # Target surface constraints (Where do we care/not care) about model accuracy
+  min_dist_from_existing_km_target: 0.0  # Applied to points in the context geojson path
+  exclusion_points_path_target: /Users/jagraha/dev/deepsensor_projects/data/buoy/pretend_locations/erie_exclustion.geojson
+  min_dist_from_exclusion_km_target: 5.0  # Applied to points in the exclusion points path
+  min_shore_dist_target: 0.0  # Applied to the distance from land layer (must be included as context)
+  min_depth_target: 2.0  # Applies to bathymetry (Must be incldued as context)
+
 
   # Outputs
   save_acquisition_surface: true
@@ -105,7 +110,7 @@ active_learning:
   #   automatically ignored (with a warning) and diff=False is used.
 
 skill_curve:
-  name: w_erie_mini_test
+  name: template
   notes: "prefix sweep + random envelope on the test split"
 
   al_experiments: []     # [] -> auto-discover
