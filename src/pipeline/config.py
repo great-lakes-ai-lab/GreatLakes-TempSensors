@@ -357,6 +357,8 @@ class SkillCurveConfig:
     date_subsample_factor: int = 30
     sc_months_drop: list = field(default_factory=list)
 
+    use_al_target_mask_for_error: bool = False
+
     # Number of greedy picks to walk through. None -> all available.
     k_max: int = None
 
@@ -419,7 +421,7 @@ class SkillCurveConfig:
         if sm is True or sm == "endpoints":
             return {0, k_max}
         if sm == "all":
-            return set(range(k_max, 1))
+            return set(range(0, k_max+1))
         return {k for k in sm if 0 <= k <= k_max}
 
 

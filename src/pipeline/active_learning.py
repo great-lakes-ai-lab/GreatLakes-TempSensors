@@ -100,6 +100,7 @@ def run_active_learning(config, bundle, tl_config):
     search_mask = grids["search_mask"]
     target_grid = grids["target_grid"]
     target_mask = grids["target_mask"]
+    target_mask_norm = grids["target_mask_norm"]
 
     print(f"  Search grid shape: {search_grid.shape}")
     print(f"  Target grid shape: {target_grid.shape}")
@@ -110,6 +111,13 @@ def run_active_learning(config, bundle, tl_config):
 
     target_mask_path = output_dir / "target_mask.nc"
     target_mask.to_netcdf(target_mask_path)
+
+    target_mask_norm_path = output_dir / "target_mask_norm.nc"
+    target_mask_norm.to_netcdf(target_mask_norm_path)
+
+    # TDOD: Save out a version of target mask that is regridded to the target variable size (eg. bundle['sst_anom']) then put through the
+    #   data processor to be in normalized data coords. Then it can get picked up in compute weighted scores via skill curve to mask only
+    #   to the areas identified in the target mask (Optional)
 
     n_valid_candidates = int(search_mask.sum())
     print(f"Search grid: {n_valid_candidates} cells to be evaluated")
@@ -1062,6 +1070,8 @@ def build_grids_and_masks(bundle, config, acq_fn):
 
     is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
 
+    target_mask_norm = bundle['data_processor'].map_coords(target_mask, unnorm=False)
+
     if is_parallel:
         candidate = al_cfg.candidate_coarsen_factor or 1
         target = al_cfg.target_coarsen_factor or 1
@@ -1083,6 +1093,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
         return {
             "search_grid": base_grid, "search_mask": search_mask,
             "target_grid": base_grid, "target_mask": search_mask,
+            "target_mask_norm": target_mask_norm
         }
     else:
         # Sequential: X_s can be coarser than X_t
@@ -1108,6 +1119,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
             "search_mask": search_mask,
             "target_grid": target_grid,
             "target_mask": target_mask,
+            "target_mask_norm": target_mask_norm
         }
 
 
@@ -1298,6 +1310,7 @@ def plot_active_learning_results(
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     # One acquisition map per iteration
+    # TODO: Make this so that you get a multipane plot (1x3, 2x2, 2x3, etc) instead of the individual pngs
     for iteration in acquisition_ds.iteration.values:
         da_iter = acquisition_ds.sel(iteration=iteration).mean("time", skipna=True)
 

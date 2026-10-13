@@ -59,6 +59,8 @@ _REC_FILENAME_CANDIDATES = (
     "X_new.csv",
 )
 
+_ROW_METRICS = ("rmse", "mae", "bias", "nll",
+                "coverage_1sigma", "coverage_2sigma", "mean_std")
 
 # ---------------------------------------------------------------------
 # Spatial skill-map accumulation
@@ -100,6 +102,8 @@ class SkillMapAccumulator:
         self.sum_abs_err = np.zeros(shape, dtype=np.float64)
         self.sum_true = np.zeros(shape, dtype=np.float64)
 
+        self.n_in_mask = np.zeros(shape, dtype=np.int32)
+
     def _nearest_idx(self, values, sorted_coords, descending):
         idx = np.searchsorted(sorted_coords, values)
         idx = np.clip(idx, 1, sorted_coords.size - 1)
@@ -111,8 +115,15 @@ class SkillMapAccumulator:
             idx = sorted_coords.size - 1 - idx
         return idx
 
-    def __call__(self, task, lats, lons, mean, true, std, w):
-        """point_sink signature; w is unused (maps are per-cell, unweighted)."""
+    def __call__(self, task, lats, lons, mean, true, std, w, in_mask=None):
+        """
+        point_sink signature; `w` is unused (maps are per-cell, unweighted).
+
+        `in_mask` is binned into n_in_mask so the output dataset records which
+        cells fall inside the active-learning target mask. A per-cell map
+        restricted to the mask is just the full map with other cells dropped,
+        so no second set of accumulators is needed.
+        """
         if lats.size == 0:
             return
         i = self._nearest_idx(lats, self._lat_sorted, self._lat_desc)
@@ -121,15 +132,39 @@ class SkillMapAccumulator:
 
         err = mean - true
         for arr, vals in (
-            (self.sum_std, std),
-            (self.sum_var, std ** 2),
-            (self.sum_err, err),
-            (self.sum_sq_err, err ** 2),
-            (self.sum_abs_err, np.abs(err)),
-            (self.sum_true, true),
+                (self.sum_std, std),
+                (self.sum_var, std ** 2),
+                (self.sum_err, err),
+                (self.sum_sq_err, err ** 2),
+                (self.sum_abs_err, np.abs(err)),
+                (self.sum_true, true),
         ):
             np.add.at(arr.reshape(-1), flat, vals)
         np.add.at(self.n.reshape(-1), flat, 1)
+
+        if in_mask is not None:
+            np.add.at(self.n_in_mask.reshape(-1), flat,
+                      np.asarray(in_mask, dtype=np.int32))
+
+    # def __call__(self, task, lats, lons, mean, true, std, w):
+    #     """point_sink signature; w is unused (maps are per-cell, unweighted)."""
+    #     if lats.size == 0:
+    #         return
+    #     i = self._nearest_idx(lats, self._lat_sorted, self._lat_desc)
+    #     j = self._nearest_idx(lons, self._lon_sorted, self._lon_desc)
+    #     flat = i * self.lons.size + j
+    #
+    #     err = mean - true
+    #     for arr, vals in (
+    #         (self.sum_std, std),
+    #         (self.sum_var, std ** 2),
+    #         (self.sum_err, err),
+    #         (self.sum_sq_err, err ** 2),
+    #         (self.sum_abs_err, np.abs(err)),
+    #         (self.sum_true, true),
+    #     ):
+    #         np.add.at(arr.reshape(-1), flat, vals)
+    #     np.add.at(self.n.reshape(-1), flat, 1)
 
     def to_dataset(self):
         import xarray as xr
@@ -169,8 +204,23 @@ class SkillMapAccumulator:
                     self.n, dims=dims, coords=coords,
                     attrs={"long_name": "tasks contributing to this cell"},
                 ),
+                "n_obs": xr.DataArray(
+                    self.n, dims=dims, coords=coords,
+                    attrs={"long_name": "tasks contributing to this cell"},
+                ),
+                "n_obs_in_target_mask": xr.DataArray(
+                    self.n_in_mask, dims=dims, coords=coords,
+                    attrs={"long_name": "contributing obs that fell inside "
+                                        "the AL target mask"},
+                ),
+                "in_target_mask": _da(
+                    np.where(valid,
+                             self.n_in_mask / np.where(valid, n, 1.0),
+                             np.nan),
+                    "fraction of this cell's obs inside the AL target mask",
+                    "1",
+                ),
             },
-            attrs={"note": "SST anomaly space (seasonal cycle removed)"},
         )
 
 
@@ -187,7 +237,7 @@ def run_skill_curve(config, bundle, tl_config):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # split_range = _resolve_split_range(config, sc.split)
-    dates = dates_from_intervals(sc.eval_range, sc.date_subsample_factor, sc.sc_months_drop)
+    dates = dates_from_intervals(sc.eval_range, sc.date_subsample_factor, months_to_drop=sc.sc_months_drop)
     if len(dates) == 0:
         raise ValueError(
             f"No dates resolved from range={sc.eval_range} "
@@ -217,7 +267,8 @@ def run_skill_curve(config, bundle, tl_config):
 
     # --- Greedy curves -------------------------------------------------
     for exp in experiments:
-        exp_rows, exp_per_task, smaps, warns, X_base, k_max = _score_experiment(
+        (exp_rows, exp_per_task, smaps, warns,
+         X_base, k_max, target_mask) = _score_experiment(
             exp, config, bundle, tl_config, model, dates, sc,
         )
         rows.extend(exp_rows)
@@ -226,22 +277,24 @@ def run_skill_curve(config, bundle, tl_config):
         if smaps:
             skill_map_stores[exp["name"]] = smaps
 
-        # Dedupe: experiments sharing a baseline (e.g. several acquisition
-        # functions off the same buoy network) need only one envelope.
         sig = (X_base.shape[1], float(np.sum(X_base)), float(np.sum(X_base ** 2)))
         prev = baselines.get(sig)
         if prev is None or k_max > prev[2]:
-            baselines[sig] = (exp["name"], X_base, max(k_max, prev[2] if prev else 0))
+            baselines[sig] = (
+                exp["name"], X_base,
+                max(k_max, prev[2] if prev else 0),
+                target_mask if target_mask is not None else (prev[3] if prev else None),
+            )
 
     # --- Random placements -----------------------------------------------
     # Find the search mask
     search_mask = xr.open_dataset(list(experiments[0]['dir'].glob("search_mask.nc"))[0])
     if sc.random_baseline:
-        for label, X_base, k_max in baselines.values():
+        for label, X_base, k_max, target_mask in baselines.values():
             base_rows, base_per_task = _score_random_baseline(
                 config, bundle, tl_config, model, dates, sc,
                 X_base_actual=X_base, k_max=k_max, label=label,
-                search_mask=search_mask
+                search_mask=search_mask, target_mask=target_mask,
             )
             rows.extend(base_rows)
             per_task.extend(base_per_task)
@@ -253,16 +306,20 @@ def run_skill_curve(config, bundle, tl_config):
 
     if sc.random_baseline and sc.random_mode == "augment":
         k0 = curve_df[curve_df.k == 0]
-        g = k0[k0.placement == "greedy"]["rmse"]
-        r = k0[k0.placement == "random"]["rmse"]
-        if len(g) and len(r) and not np.allclose(r, g.iloc[0], rtol=1e-6):
-            w = ("k=0 RMSE differs between greedy and random-augment "
-                 f"(greedy={g.iloc[0]:.6f}, random={sorted(set(r.round(6)))}). "
-                 "In augment mode both use the identical baseline context, so "
-                 "these must match -- suspect baseline reconstruction or "
-                 "nondeterminism in task generation.")
-            warnings.warn(w, UserWarning)
-            warnings_log.append(w)
+        for col in ("rmse", "rmse_masked"):
+            if col not in k0.columns:
+                continue
+            g = k0[k0.placement == "greedy"][col].dropna()
+            r = k0[k0.placement == "random"][col].dropna()
+            if len(g) and len(r) and not np.allclose(r, g.iloc[0], rtol=1e-6):
+                w = (f"k=0 {col} differs between greedy and random-augment "
+                     f"(greedy={g.iloc[0]:.6f}, "
+                     f"random={sorted(set(r.round(6)))}). In augment mode both "
+                     "use the identical baseline context, so these must match "
+                     "-- suspect baseline reconstruction or nondeterminism in "
+                     "task generation.")
+                warnings.warn(w, UserWarning)
+                warnings_log.append(w)
 
     curve_df.to_csv(out_dir / "skill_curve.csv", index=False)
     if not per_task_df.empty:
@@ -281,6 +338,8 @@ def run_skill_curve(config, bundle, tl_config):
         _save_skill_maps(skill_map_stores, out_dir)
 
     _plot_skill_curve(config, curve_df, agg, sc, out_dir)
+    if "rmse_masked_mean" in agg.columns:
+        _plot_skill_curve(config, curve_df, agg, sc, out_dir, suffix="_masked", region_label="AL target mask")
 
     print(f"\nSkill curve complete. Outputs: {out_dir}")
     return {"curve": curve_df, "aggregate": agg, "metrics": results}
@@ -440,7 +499,8 @@ def _score_prefix_sweep(
     k_values,
     config, bundle, tl_config, model, dates, sc,
     map_ks=None,
-    map_template=None
+    map_template=None,
+    target_mask=None
 ):
     """
     Score context = X_base U X_extra[:, :k] for each k.
@@ -479,6 +539,7 @@ def _score_prefix_sweep(
             model, tasks, bundle, tl_config.task_loader,
             return_per_task=True,
             point_sink=acc,
+            target_mask=target_mask
         )
 
         if acc is not None:
@@ -489,16 +550,20 @@ def _score_prefix_sweep(
             "k": int(k),
             "n_context_total": int(X_k.shape[1]),
             "n_tasks": scores["n_tasks"],
-            "rmse": scores["rmse"],
-            "mae": scores["mae"],
-            "bias": scores["bias"],
-            "nll": scores["nll"],
-            "coverage_1sigma": scores["coverage_1sigma"],
-            "coverage_2sigma": scores["coverage_2sigma"],
-            "mean_std": scores["mean_std"],
         }
+        for mk in _ROW_METRICS:
+            row[mk] = scores[mk]
+            if f"{mk}_masked" in scores:
+                row[f"{mk}_masked"] = scores[f"{mk}_masked"]
+        for extra in ("n_tasks_masked", "n_target_mean",
+                      "n_target_masked_mean", "frac_target_in_mask"):
+            if extra in scores:
+                row[extra] = scores[extra]
 
         if sc.compute_joint_nll:
+            # NOTE: joint NLL is computed over the *full* target set and is
+            # not maskable post-hoc (it depends on the joint over all target
+            # points). No `_masked` counterpart by design.
             row["joint_nll"] = _joint_nll(model, tasks)
 
         rows.append(row)
@@ -508,6 +573,8 @@ def _score_prefix_sweep(
         msg = (f"    k={k:>3} n_ctx={X_k.shape[1]:>4} | "
                f"rmse={row['rmse']:.4f}  nll={row['nll']:.4f}  "
                f"mean_std={row['mean_std']:.4f}")
+        if "rmse_masked" in row:
+            msg += f" | masked rmse={row['rmse_masked']:.4f}"
         if sc.compute_joint_nll:
             msg += f"  jnll={row['joint_nll']:.4f}"
         print(msg)
@@ -564,6 +631,19 @@ def _score_experiment(exp, config, bundle, tl_config, model, dates, sc):
     if map_ks:
         print(f"    skill maps at k = {sorted(map_ks)}")
 
+    target_mask = None
+    if getattr(sc, "use_al_target_mask_for_error", False):
+        target_mask_path = exp["dir"] / "target_mask_norm.nc"
+        if target_mask_path.exists():
+            target_mask = xr.open_dataarray(target_mask_path)
+            print(f"    scoring full extent AND target mask "
+                  f"({int(np.nan_to_num(target_mask.values).sum())} mask cells)")
+        else:
+            w = (f"use_target_mask_for_error=True but no target_mask_norm.nc "
+                 f"in {exp['dir']}; reporting full target extent only.")
+            warnings.warn(w, UserWarning)
+            warns.append(w)
+
 
     rows, per_task_rows, skill_maps = _score_prefix_sweep(
         label_fields={
@@ -578,7 +658,8 @@ def _score_experiment(exp, config, bundle, tl_config, model, dates, sc):
         config=config, bundle=bundle, tl_config=tl_config,
         model=model, dates=dates, sc=sc,
         map_ks=map_ks,
-        map_template=map_template
+        map_template=map_template,
+        target_mask=target_mask
         )
 
 
@@ -590,19 +671,21 @@ def _score_experiment(exp, config, bundle, tl_config, model, dates, sc):
             "lon": raw_new[1],
         })
         # This is a temporary check
-        acc_n = skill_maps[0]["n_obs"].values.sum()
-        print(f"binned {acc_n} points; expected {len(dates)} × n_target")
+        k_first = sorted(k for k in skill_maps if isinstance(k, int))[0]
+        acc_n = skill_maps[k_first]["n_obs"].values.sum()
+        print(f"binned {acc_n} points at k={k_first}; "
+              f"expected {len(dates)} × n_target")
         """
         Total binned points should equal the sum of n_target across per-task rows, and no cell should exceed len(dates). If cells exceed the date count, two target points collided into one cell — meaning map_coord_array(unnorm=True) isn't recovering the original grid coords exactly and you'd want method="nearest" reindexing instead.
 Y_t_aux NaNs. Still outstanding from my previous message, and n_obs now gives you a free diagnostic: if n_obs is systematically zero or low along the shoreline, that's bathymetry NaNs silently deleting nearshore targets in every stage, including your existing evaluation_metrics.json
         """
 
-    return rows, per_task_rows, skill_maps, warns, X_base, k_max
+    return rows, per_task_rows, skill_maps, warns, X_base, k_max, target_mask
 
 
 def _score_random_baseline(
     config, bundle, tl_config, model, dates, sc,
-    X_base_actual: np.ndarray, k_max: int, label: str, search_mask,
+    X_base_actual: np.ndarray, k_max: int, label: str, search_mask, target_mask=None
 ):
     """
     Random-placement envelope, matched to a greedy curve's starting network.
@@ -662,7 +745,8 @@ def _score_random_baseline(
             config=config, bundle=bundle, tl_config=tl_config,
             model=model, dates=dates,
             sc=sc,
-            map_ks=set()
+            map_ks=set(),
+            target_mask=target_mask
         )
         rows.extend(r)
         per_task_rows.extend(pt)
@@ -708,6 +792,10 @@ def _joint_nll(model, tasks) -> float:
 # ---------------------------------------------------------------------
 # Aggregation and output
 # ---------------------------------------------------------------------
+_AGG_BASE_METRICS = (
+    "rmse", "nll", "mae", "bias",
+    "coverage_1sigma", "coverage_2sigma", "mean_std", "joint_nll",
+)
 
 def _aggregate(curve_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -715,36 +803,79 @@ def _aggregate(curve_df: pd.DataFrame) -> pd.DataFrame:
 
     Greedy rows are deterministic (single seed=-1), so mean == value and std
     is 0; random rows get a genuine spread that becomes the envelope.
+    Masked metrics are aggregated alongside their full-extent counterparts.
     """
-    metric_cols = [
-        "rmse", "nll", "mae", "bias",
-        "coverage_1sigma", "coverage_2sigma", "mean_std",
-    ]
-    if "joint_nll" in curve_df.columns:
-        metric_cols.append("joint_nll")
+    metric_cols = [m for m in _AGG_BASE_METRICS if m in curve_df.columns]
+    metric_cols += [f"{m}_masked" for m in _AGG_BASE_METRICS
+                    if f"{m}_masked" in curve_df.columns]
 
     agg_spec = {}
     for m in metric_cols:
-        agg_spec[f"{m}_mean"] = (m, "mean")
-        agg_spec[f"{m}_std"] = (m, "std")
-        agg_spec[f"{m}_min"] = (m, "min")
-        agg_spec[f"{m}_max"] = (m, "max")
+        for stat in ("mean", "std", "min", "max"):
+            agg_spec[f"{m}_{stat}"] = (m, stat)
 
     agg_spec.update({
         "n_context_total": ("n_context_total", "first"),
         "n_tasks": ("n_tasks", "first"),
         "n_seeds": ("seed", "nunique"),
     })
+    if "n_tasks_masked" in curve_df.columns:
+        agg_spec["n_tasks_masked"] = ("n_tasks_masked", "first")
+    if "n_target_masked_mean" in curve_df.columns:
+        agg_spec["n_target_masked_mean"] = ("n_target_masked_mean", "first")
 
-    return (
+    out = (
         curve_df
         .groupby(["experiment", "placement", "acquisition_function", "k"],
                  as_index=False)
         .agg(**agg_spec)
-        .fillna(0.0)
-        .sort_values(["placement", "experiment", "k"])
-        .reset_index(drop=True)
     )
+
+    # Only _std is legitimately 0 for single-seed rows; do NOT blanket-fill,
+    # or an empty-mask NaN would masquerade as perfect skill.
+    std_cols = [c for c in out.columns if c.endswith("_std")]
+    out[std_cols] = out[std_cols].fillna(0.0)
+
+    return (out.sort_values(["placement", "experiment", "k"])
+               .reset_index(drop=True))
+
+# def _aggregate(curve_df: pd.DataFrame) -> pd.DataFrame:
+#     """
+#     Collapse seeds within each (experiment, k).
+#
+#     Greedy rows are deterministic (single seed=-1), so mean == value and std
+#     is 0; random rows get a genuine spread that becomes the envelope.
+#     """
+#     metric_cols = [
+#         "rmse", "nll", "mae", "bias",
+#         "coverage_1sigma", "coverage_2sigma", "mean_std",
+#     ]
+#     if "joint_nll" in curve_df.columns:
+#         metric_cols.append("joint_nll")
+#
+#     agg_spec = {}
+#     for m in metric_cols:
+#         agg_spec[f"{m}_mean"] = (m, "mean")
+#         agg_spec[f"{m}_std"] = (m, "std")
+#         agg_spec[f"{m}_min"] = (m, "min")
+#         agg_spec[f"{m}_max"] = (m, "max")
+#
+#     agg_spec.update({
+#         "n_context_total": ("n_context_total", "first"),
+#         "n_tasks": ("n_tasks", "first"),
+#         "n_seeds": ("seed", "nunique"),
+#     })
+#
+#     return (
+#         curve_df
+#         .groupby(["experiment", "placement", "acquisition_function", "k"],
+#                  as_index=False)
+#         .agg(**agg_spec)
+#         .fillna(0.0)
+#         .sort_values(["placement", "experiment", "k"])
+#         .reset_index(drop=True)
+#     )
+
 
 def _write_metrics_json(
         config, sc, out_dir, dates, split_range,
@@ -771,25 +902,35 @@ def _write_metrics_json(
         k0, kn = grp.iloc[0], grp.iloc[-1]
         rnd = curve_df[(curve_df.placement == "random") &
                        (curve_df.k == kn["k"])]
-        summary[exp_name] = {
+
+        entry = {
             "acquisition_function": kn["acquisition_function"],
             "k_max": int(kn["k"]),
-            "rmse_k0": float(k0["rmse"]),
-            "rmse_kmax": float(kn["rmse"]),
-            "rmse_reduction": float(k0["rmse"] - kn["rmse"]),
-            "rmse_reduction_pct": float(
-                100.0 * (k0["rmse"] - kn["rmse"]) / k0["rmse"]
-            ) if k0["rmse"] else None,
             "nll_k0": float(k0["nll"]),
             "nll_kmax": float(kn["nll"]),
-            "random_rmse_mean_at_kmax": (
-                float(rnd["rmse"].mean()) if not rnd.empty else None
-            ),
-            "beats_random_mean_at_kmax": (
-                bool(kn["rmse"] < rnd["rmse"].mean())
-                if not rnd.empty else None
-            ),
         }
+
+        for region, col in (("full", "rmse"), ("target_mask", "rmse_masked")):
+            if col not in grp.columns or pd.isna(k0[col]):
+                continue
+            r0, rn = float(k0[col]), float(kn[col])
+            entry[region] = {
+                "rmse_k0": r0,
+                "rmse_kmax": rn,
+                "rmse_reduction": r0 - rn,
+                "rmse_reduction_pct": (100.0 * (r0 - rn) / r0) if r0 else None,
+                "random_rmse_mean_at_kmax": (
+                    float(rnd[col].mean())
+                    if (not rnd.empty and col in rnd.columns
+                        and rnd[col].notna().any()) else None
+                ),
+                "beats_random_mean_at_kmax": (
+                    bool(rn < rnd[col].mean())
+                    if (not rnd.empty and col in rnd.columns
+                        and rnd[col].notna().any()) else None
+                ),
+            }
+        summary[exp_name] = entry
 
     results = {
         "run_name": config.run.name,
@@ -825,6 +966,11 @@ def _write_metrics_json(
         "curve_raw": curve_df.to_dict(orient="records"),
         "warnings": warnings_log,
         "evaluated_at": str(pd.Timestamp.now()),
+        "use_target_mask_for_error": getattr(sc, "use_target_mask_for_error", False),
+        "metric": "area-weighted (cos-lat) scores, physical units -- identical "
+                  "estimator to training and evaluate.py. Reported over the "
+                  "full target extent and, where available, over the active-"
+                  "learning target mask (`*_masked`).",
     }
 
     with open(out_dir / "skill_curve_metrics.json", "w") as f:
@@ -888,20 +1034,27 @@ def _save_skill_maps(skill_map_stores: dict, out_dir: Path):
 # Plotting
 # ---------------------------------------------------------------------
 
-def _plot_skill_curve(config, curve_df, agg, sc, out_dir):
+def _plot_skill_curve(config, curve_df, agg, sc, out_dir,
+                      suffix: str = "", region_label: str = "full lake"):
     """RMSE / NLL / mean sigma vs number of added sensors."""
     import matplotlib.pyplot as plt
     from pipeline.plotting import _finish_plot
 
     panels = [
-        ("rmse", "RMSE (physical units)", "RMSE vs sensors added"),
-        ("nll", "Marginal NLL", "NLL vs sensors added"),
-        ("mean_std", r"Mean predictive $\sigma$", "Uncertainty vs sensors added"),
+        (f"rmse{suffix}", "RMSE (physical units)", "RMSE vs sensors added"),
+        (f"nll{suffix}", "Marginal NLL", "NLL vs sensors added"),
+        (f"mean_std{suffix}", r"Mean predictive $\sigma$",
+         "Uncertainty vs sensors added"),
     ]
-    if sc.compute_joint_nll and "joint_nll" in curve_df.columns:
+    # joint NLL has no masked counterpart -- only draw it on the full figure
+    if not suffix and sc.compute_joint_nll and "joint_nll" in curve_df.columns:
         panels.append(
             ("joint_nll", "Joint NLL / $N_t$", "Joint NLL vs sensors added")
         )
+
+    panels = [p for p in panels if f"{p[0]}_mean" in agg.columns]
+    if not panels:
+        return
 
     fig, axs = plt.subplots(1, len(panels), figsize=(6 * len(panels), 5))
     axs = np.atleast_1d(axs)
@@ -959,9 +1112,8 @@ def _plot_skill_curve(config, curve_df, agg, sc, out_dir):
 
     fig.suptitle(
         f"{config.run.name} — {config.lake} — skill curve "
-        f"('{sc.name}')",
+        f"('{sc.name}', {region_label})",
         y=1.02,
     )
     fig.tight_layout()
-
-    _finish_plot(config, out_dir / "skill_vs_nsensors.png")
+    _finish_plot(config, out_dir / f"skill_vs_nsensors{suffix}.png")

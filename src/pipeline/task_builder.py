@@ -314,8 +314,6 @@ def gen_tasks(
 #
 #     for date in tqdm(dates, disable=not progress, desc="Generating tasks"):
 #         # Determine context points for this task
-#         # TODO: Wire in train_tasks_random, plus, active, task ratios from config and update so that context points per
-#         #   task are generating using the active geojson as requested
 #         if fixed_context_points is not None:
 #             context_points = fixed_context_points
 #         else:
