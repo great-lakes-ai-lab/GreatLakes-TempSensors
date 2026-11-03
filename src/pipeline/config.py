@@ -278,6 +278,7 @@ class PredictionConfig:
 
 @dataclass
 class EvaluationConfig:
+    name: str = 'default'
     split: str = "test"                      # train, val, or test
     date_subsample_factor: int = 7           # stride over the split range
     n_context_sweep: list = field(

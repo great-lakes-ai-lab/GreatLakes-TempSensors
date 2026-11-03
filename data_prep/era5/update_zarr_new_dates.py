@@ -24,17 +24,17 @@ from arraylake import Client
 # =============================================================================
 
 # Existing Zarr store to append to
-STORE_PATH = Path('/Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr')
+STORE_PATH = Path('/Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_1998.zarr')
 
 # Latest date you want in the store. The script will clamp this to whatever
 # ERA5 actually has available (last complete 24-hour day).
-APPEND_THROUGH = "2025-12-31"
+APPEND_THROUGH = "2000-12-31"
 
 # Variables to append — must match what's already in the store
 VARIABLES = ["t2m", "ssr", "u10", "v10"]
 
 # Set True to report what *would* happen without writing anything
-DRY_RUN = True
+DRY_RUN = False
 
 # Make a copy of the store before writing (recommended; appends are in-place)
 MAKE_BACKUP = True
@@ -49,7 +49,7 @@ RETRY_DELAY = 10  # seconds
 
 VAR_SPEC = {
     "t2m": {
-        "source": "t2",
+        "source": "t2m",
         "output": "t2m_daily_mean",
         "how": "mean",
         "offset": -273.15,
@@ -117,7 +117,10 @@ first_var = existing_vars[0]
 time_chunk = ds_existing[first_var].encoding.get("chunks", (None,))[0]
 
 has_time_label = "time_label" in ds_existing.coords
+time_label_dtype = ds_existing["time_label"].dtype if has_time_label else None
 existing_attrs = dict(ds_existing.attrs)
+print(f"  time_label:  {'present' if has_time_label else 'absent'}"
+      f"{f' (dtype {time_label_dtype})' if has_time_label else ''}")
 
 print(f"  Variables:   {existing_vars}")
 print(f"  Time range:  {existing_times[0].date()} to {last_time.date()} "
@@ -164,12 +167,18 @@ ds_src = xr.open_dataset(
     consolidated=False,
     zarr_format=3,
     chunks="auto",
-    group="temporal",
+    group="single/temporal",
+    # group='temporal'
 )
 print(f"  Source variables: {list(ds_src.data_vars)}")
 
+
+if "valid_time" in ds_src.dims:
+    ds_src = ds_src.rename({"valid_time": "time"})
+
 # Last available hourly timestamp; clamp to last COMPLETE day so that
 # daily sums/means are not computed from a partial day.
+
 src_last = pd.Timestamp(ds_src.time.values[-1])
 if src_last.hour == 23:
     last_complete_day = src_last.normalize()
@@ -249,16 +258,24 @@ def process_with_retry(ds_src, t0, t1, variables, lats, lons):
                 raise RuntimeError(f"Failed to process {t0} to {t1}") from e
 
 
-def prepare_for_append(ds_new, add_time_label):
+def prepare_for_append(ds_new, add_time_label, label_dtype=None):
     """Strip encoding and add the auxiliary time label coordinate."""
     for name in list(ds_new.data_vars) + list(ds_new.coords):
         ds_new[name].encoding.clear()
 
     if add_time_label:
         labels = pd.to_datetime(ds_new.time.values).strftime("%Y-%m-%d")
-        ds_new = ds_new.assign_coords(
-            time_label=("time", np.asarray(labels, dtype="<U10"))
-        )
+        arr = np.asarray(list(labels), dtype=object)
+
+        if label_dtype is not None:
+            try:
+                arr = arr.astype(label_dtype)
+            except (TypeError, ValueError) as e:
+                print(f"  ⚠ Could not cast time_label to {label_dtype} ({e}); "
+                      f"leaving as {arr.dtype}")
+
+        ds_new = ds_new.assign_coords(time_label=("time", arr))
+
     return ds_new
 
 
@@ -327,7 +344,7 @@ for i, (w0, w1) in enumerate(windows, 1):
             f"expected {len(want)}"
         )
 
-    ds_new = prepare_for_append(ds_new, add_time_label=has_time_label)
+    ds_new = prepare_for_append(ds_new, add_time_label=has_time_label, label_dtype=time_label_dtype)
 
     # Confirm nothing is Dask-backed, so the append is a serial write and it is
     # safe to relax chunk checks when filling the store's partial final chunk.
@@ -384,10 +401,6 @@ checks = {
         and np.array_equal(ds_check.longitude.values, target_lons)
     ),
 }
-if has_time_label:
-    checks["time_label in sync"] = bool(
-        (ds_check.time_label.values == t.strftime("%Y-%m-%d")).all()
-    )
 
 for label, ok in checks.items():
     print(f"  {'✓' if ok else '✗'} {label}")

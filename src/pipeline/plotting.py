@@ -38,20 +38,37 @@ def _should_show_plots(config) -> bool:
         return True
 
 
-def _finish_plot(config, save_path=None):
+# def _finish_plot(config, save_path=None):
+#     """Save and/or show a plot based on config."""
+#     import matplotlib.pyplot as plt
+#
+#     if save_path:
+#         save_path = Path(save_path)
+#         save_path.parent.mkdir(parents=True, exist_ok=True)
+#         plt.savefig(save_path, dpi=150, bbox_inches="tight")
+#
+#     if _should_show_plots(config):
+#         plt.show()
+#     else:
+#         plt.close()
+
+
+def _finish_plot(config, save_path=None, fig=None):
     """Save and/or show a plot based on config."""
     import matplotlib.pyplot as plt
+
+    target = fig if fig is not None else plt.gcf()
 
     if save_path:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        target.savefig(save_path, dpi=150, bbox_inches="tight")
 
     if _should_show_plots(config):
         plt.show()
+        plt.close(target)   # show() is blocking interactively, no-op in notebooks
     else:
-        plt.close()
-
+        plt.close(target)
 
 def _get_actual_ds(bundle: dict, config) -> tuple:
     """

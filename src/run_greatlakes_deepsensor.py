@@ -116,7 +116,7 @@ def main():
         # print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
 
         print(f"Generating {len(val_dates)} validation tasks")
-        val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=False, n_context=tc.n_context_points)
+        val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=tc.vary_n_context, n_context=tc.n_context_points)
 
         if tc.train_date_mode == "random":
             date_sampler, _, _ = make_train_date_sampler(config)
@@ -219,8 +219,7 @@ if __name__ == "__main__":
         "run_greatlakes_deepsensor.py",
         "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
         # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Oct5_Erie_Strong/al_config.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/sep30_small_model_for_AL_mask/al_config_sep30.yaml",
-        "--stage", "all",
+        "--stage", "train",
         # "--stage", "active_learning"
     ]
     main()

@@ -109,6 +109,7 @@ training:
 
 
 evaluation:
+  name: default
   split: test                 # Held-out split to score on. Use "val" while developing.
   date_subsample_factor: 7    # Stride over the split range. 7 = weekly.
   n_context_sweep: [5, 10, 25, 50, 100, 150, 200]  # RMSE is meaningless without stating n_context

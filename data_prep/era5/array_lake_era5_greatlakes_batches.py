@@ -41,7 +41,7 @@ VARIABLES = ["t2m", "ssr", "u10", "v10"]
 
 # Time range
 TIME_START = "1995-01-01"
-TIME_END = "2024-12-31"
+TIME_END = "2025-12-31"
 
 # Spatial extent in WGS84 (from QGIS)
 LON_MIN_WGS84 = -92.4269584928940304
@@ -100,7 +100,7 @@ def process_year_batch(ds, year_start, year_end, variables, lat_max, lat_min, lo
 
     # --- 2m Temperature ---
     if "t2m" in variables:
-        t2 = select_region(ds["t2"], time_start, time_end,
+        t2 = select_region(ds["t2m"], time_start, time_end,
                            lat_max, lat_min, lon_min, lon_max)
         t2m_daily = (t2.resample(time="1D").mean() - 273.15).compute()
         t2m_ds = t2m_daily.to_dataset(name="t2m_daily_mean")
@@ -190,7 +190,7 @@ print()
 
 print("Connecting to ArrayLake...")
 client = Client()
-repo = client.get_repo("earthmover-public/era5-surface-aws")
+repo = client.get_repo("earthmover-public/era5")
 session = repo.readonly_session("main")
 
 # Open dataset with dask chunks for parallel computation
@@ -200,11 +200,13 @@ ds = xr.open_dataset(
     consolidated=False,
     zarr_format=3,
     chunks="auto",
-    group="temporal",
+    group="single/temporal",
 )
 
 print(f"Dataset loaded. Available variables: {list(ds.data_vars)}")
 print()
+if "valid_time" in ds.dims:
+    ds = ds.rename({"valid_time": "time"})
 
 # =============================================================================
 # PROCESS IN BATCHES

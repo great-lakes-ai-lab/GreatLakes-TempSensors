@@ -3,6 +3,7 @@
 
 from pathlib import Path
 from typing import Union
+import math
 
 import numpy as np
 import pandas as pd
@@ -183,8 +184,11 @@ def run_active_learning(config, bundle, tl_config):
             print(f"Warning: Could not save acquisition surface as NetCDF: {e}")
             pass
 
-
     if al_cfg.plot_results:
+        overlays = build_plot_overlays(
+            context_latlon=context_points_to_latlon(fixed_context_points, bundle),
+            search_exclusion_points=grids.get("search_exclusion_points"),
+        )
         plot_active_learning_results(
             X_new_df,
             acquisition_fn_ds,
@@ -193,6 +197,8 @@ def run_active_learning(config, bundle, tl_config):
             acquisition_name=al_cfg.acquisition_function,
             x1_name=get_x1_name(model),
             x2_name=get_x2_name(model),
+            overlays=overlays,
+            search_mask=search_mask,
         )
 
     print("\nActive learning complete.")
@@ -668,10 +674,7 @@ def save_context_points(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Unnormalize to lat/lon
-    data_processor = bundle["data_processor"]
-    points_latlon = data_processor.map_coord_array(context_points, unnorm=True)
-    lats = points_latlon[0]
-    lons = points_latlon[1]
+    lats, lons = context_points_to_latlon(context_points, bundle)
 
     # Save as GeoJSON
     geojson_path = output_dir / "context_points.geojson"
@@ -712,8 +715,26 @@ def save_context_points(
     save_path = output_dir / "context_points_map.png"
     _finish_plot(config, save_path)
 
-    return points_latlon
+    return np.array([lats, lons])
 
+
+def context_points_to_latlon(context_points: np.ndarray, bundle: dict) -> tuple:
+    """
+    Convert normalized (2, N) context points to (lats, lons) in WGS84.
+
+    Parameters
+    ----------
+    context_points : np.ndarray
+        Shape (2, N); row 0 = x1 (normalized lat), row 1 = x2 (normalized lon).
+    bundle : dict
+        Processed bundle (needs 'data_processor').
+
+    Returns
+    -------
+    tuple (lats, lons) as float numpy arrays.
+    """
+    pts = bundle["data_processor"].map_coord_array(context_points, unnorm=True)
+    return np.asarray(pts[0], dtype=float), np.asarray(pts[1], dtype=float)
 
 # ---------------------------------------------------------------------
 # Date helpers
@@ -1068,6 +1089,12 @@ def build_grids_and_masks(bundle, config, acq_fn):
                                    min_dist_km=al_cfg.min_dist_from_exclusion_km_target,
                                    points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km_target)
 
+    points = {
+        "search_exclusion_points": search_exclusion_points,
+        "target_exclusion_points": target_exclusion_points,
+        "fixed_context_points_latlon": fixed_context_points,
+    }
+
     is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
 
     target_mask_norm = bundle['data_processor'].map_coords(target_mask, unnorm=False)
@@ -1093,7 +1120,8 @@ def build_grids_and_masks(bundle, config, acq_fn):
         return {
             "search_grid": base_grid, "search_mask": search_mask,
             "target_grid": base_grid, "target_mask": search_mask,
-            "target_mask_norm": target_mask_norm
+            "target_mask_norm": target_mask_norm,
+            **points
         }
     else:
         # Sequential: X_s can be coarser than X_t
@@ -1119,7 +1147,8 @@ def build_grids_and_masks(bundle, config, acq_fn):
             "search_mask": search_mask,
             "target_grid": target_grid,
             "target_mask": target_mask,
-            "target_mask_norm": target_mask_norm
+            "target_mask_norm": target_mask_norm,
+            **points
         }
 
 
@@ -1287,110 +1316,110 @@ def enforce_min_distance(X_new_df, min_dist_km, model):
 # Plotting
 # ---------------------------------------------------------------------
 
-def plot_active_learning_results(
-    recommended_df: pd.DataFrame,
-    acquisition_ds: xr.DataArray,
-    config,
-    output_dir: Path,
-    acquisition_name: str,
-    x1_name="lat",
-    x2_name="lon",
-):
-    """
-    Plot acquisition surfaces and selected sensor locations.
-
-    Produces:
-      - one plot per greedy iteration
-      - a final map of recommended locations
-    """
-    import matplotlib.pyplot as plt
-
-    output_dir = Path(output_dir)
-    plots_dir = output_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    # One acquisition map per iteration
-    # TODO: Make this so that you get a multipane plot (1x3, 2x2, 2x3, etc) instead of the individual pngs
-    for iteration in acquisition_ds.iteration.values:
-        da_iter = acquisition_ds.sel(iteration=iteration).mean("time", skipna=True)
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        da_iter.plot(ax=ax, cmap="viridis", add_colorbar=True)
-
-        # Plot all recommended points up to this iteration
-        subset = recommended_df.loc[recommended_df.index <= iteration]
-
-        ax.scatter(
-            subset[x2_name],
-            subset[x1_name],
-            facecolors="none",
-            edgecolors="red",
-            linewidths=1.5,
-            s=80,
-            zorder=5,
-            label="Recommended sensors",
-        )
-
-        for idx, row in subset.iterrows():
-            ax.text(
-                row[x2_name],
-                row[x1_name],
-                str(idx + 1),
-                color="red",
-                fontsize=9,
-                ha="center",
-                va="center",
-                zorder=6,
-            )
-
-        ax.set_title(
-            f"Active Learning Iteration {int(iteration) + 1}\n"
-            f"Acquisition: {acquisition_name}"
-        )
-        ax.legend(loc="best")
-
-        save_path = plots_dir / f"acquisition_iteration_{int(iteration) + 1}.png"
-        _finish_plot(config, save_path)
-
-    # Final recommended locations map
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    final_surface = acquisition_ds.mean(["iteration", "time"], skipna=True)
-    final_surface.plot(ax=ax, cmap="viridis", add_colorbar=True)
-
-    ax.scatter(
-        recommended_df[x2_name],
-        recommended_df[x1_name],
-        facecolors="none",
-        edgecolors="red",
-        linewidths=1.8,
-        s=90,
-        zorder=5,
-        label="Recommended sensors",
-    )
-
-    for idx, row in recommended_df.iterrows():
-        ax.text(
-            row[x2_name],
-            row[x1_name],
-            str(idx + 1),
-            color="red",
-            fontsize=9,
-            ha="center",
-            va="center",
-            zorder=6,
-        )
-
-    ax.set_title(
-        f"Recommended Sensor Locations\n"
-        f"{config.lake.upper()} — Acquisition: {acquisition_name}"
-    )
-    ax.legend(loc="best")
-
-    save_path = plots_dir / "recommended_sensor_locations.png"
-    _finish_plot(config, save_path)
-
-    print(f"Active learning plots saved to: {plots_dir}")
+# def plot_active_learning_results(
+#     recommended_df: pd.DataFrame,
+#     acquisition_ds: xr.DataArray,
+#     config,
+#     output_dir: Path,
+#     acquisition_name: str,
+#     x1_name="lat",
+#     x2_name="lon",
+# ):
+#     """
+#     Plot acquisition surfaces and selected sensor locations.
+#
+#     Produces:
+#       - one plot per greedy iteration
+#       - a final map of recommended locations
+#     """
+#     import matplotlib.pyplot as plt
+#
+#     output_dir = Path(output_dir)
+#     plots_dir = output_dir / "plots"
+#     plots_dir.mkdir(parents=True, exist_ok=True)
+#
+#     # One acquisition map per iteration
+#     # TODO: Make this so that you get a multipane plot (1x3, 2x2, 2x3, etc) in addition to the individual pngs
+#     for iteration in acquisition_ds.iteration.values:
+#         da_iter = acquisition_ds.sel(iteration=iteration).mean("time", skipna=True)
+#
+#         fig, ax = plt.subplots(figsize=(8, 6))
+#         da_iter.plot(ax=ax, cmap="viridis", add_colorbar=True)
+#
+#         # Plot all recommended points up to this iteration
+#         subset = recommended_df.loc[recommended_df.index <= iteration]
+#
+#         ax.scatter(
+#             subset[x2_name],
+#             subset[x1_name],
+#             facecolors="none",
+#             edgecolors="red",
+#             linewidths=1.5,
+#             s=80,
+#             zorder=5,
+#             label="Recommended sensors",
+#         )
+#
+#         for idx, row in subset.iterrows():
+#             ax.text(
+#                 row[x2_name],
+#                 row[x1_name],
+#                 str(idx + 1),
+#                 color="red",
+#                 fontsize=9,
+#                 ha="center",
+#                 va="center",
+#                 zorder=6,
+#             )
+#
+#         ax.set_title(
+#             f"Active Learning Iteration {int(iteration) + 1}\n"
+#             f"Acquisition: {acquisition_name}"
+#         )
+#         ax.legend(loc="best")
+#
+#         save_path = plots_dir / f"acquisition_iteration_{int(iteration) + 1}.png"
+#         _finish_plot(config, save_path)
+#
+#     # Final recommended locations map
+#     fig, ax = plt.subplots(figsize=(8, 6))
+#
+#     final_surface = acquisition_ds.mean(["iteration", "time"], skipna=True)
+#     final_surface.plot(ax=ax, cmap="viridis", add_colorbar=True)
+#
+#     ax.scatter(
+#         recommended_df[x2_name],
+#         recommended_df[x1_name],
+#         facecolors="none",
+#         edgecolors="red",
+#         linewidths=1.8,
+#         s=90,
+#         zorder=5,
+#         label="Recommended sensors",
+#     )
+#
+#     for idx, row in recommended_df.iterrows():
+#         ax.text(
+#             row[x2_name],
+#             row[x1_name],
+#             str(idx + 1),
+#             color="red",
+#             fontsize=9,
+#             ha="center",
+#             va="center",
+#             zorder=6,
+#         )
+#
+#     ax.set_title(
+#         f"Recommended Sensor Locations\n"
+#         f"{config.lake.upper()} — Acquisition: {acquisition_name}"
+#     )
+#     ax.legend(loc="best")
+#
+#     save_path = plots_dir / "recommended_sensor_locations.png"
+#     _finish_plot(config, save_path)
+#
+#     print(f"Active learning plots saved to: {plots_dir}")
 
 
 def get_x1_name(model):
@@ -1399,3 +1428,550 @@ def get_x1_name(model):
 
 def get_x2_name(model):
     return model.data_processor.config["coords"]["x2"]["name"]
+
+# ---------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------
+
+
+_PREFERRED_LAYOUTS = {
+    1: (1, 1),
+    2: (1, 2),
+    3: (1, 3),
+    4: (2, 2),
+    5: (2, 3),
+    6: (2, 3),
+    7: (2, 4),
+    8: (2, 4),
+    9: (3, 3),
+    10: (3, 4),
+    11: (3, 4),
+    12: (3, 4),
+}
+
+
+def panel_grid_shape(n_panels: int, max_cols: int = 4) -> tuple:
+    """
+    Choose a (nrows, ncols) layout for `n_panels` subplots.
+
+    Uses hand-picked layouts for small counts (1x3, 2x2, 2x3, ...) and falls
+    back to a near-square grid capped at `max_cols` columns.
+    """
+    if n_panels < 1:
+        raise ValueError(f"n_panels must be >= 1, got {n_panels}")
+
+    if n_panels in _PREFERRED_LAYOUTS:
+        return _PREFERRED_LAYOUTS[n_panels]
+
+    ncols = min(max_cols, int(math.ceil(math.sqrt(n_panels))))
+    nrows = int(math.ceil(n_panels / ncols))
+    return nrows, ncols
+
+
+def _select_panel_iterations(iterations, max_panels: int):
+    """
+    Subsample iterations for the multipane figure if there are too many.
+
+    Always keeps the first and last iteration.
+    """
+    iterations = list(iterations)
+    if max_panels is None or len(iterations) <= max_panels:
+        return iterations
+
+    idx = np.unique(
+        np.linspace(0, len(iterations) - 1, max_panels).round().astype(int)
+    )
+    return [iterations[i] for i in idx]
+
+
+def _iteration_surface(acquisition_ds: xr.DataArray, iteration) -> xr.DataArray:
+    """Mean-over-time 2D acquisition surface for a single greedy iteration."""
+    da = acquisition_ds.sel(iteration=iteration)
+    if "time" in da.dims:
+        da = da.mean("time", skipna=True)
+    return da.squeeze(drop=True)
+
+
+def _robust_limits(das, q=(2.0, 98.0)):
+    """Robust (vmin, vmax) across one or more DataArrays; (None, None) if empty."""
+    if isinstance(das, xr.DataArray):
+        das = [das]
+
+    vals = [np.ravel(np.asarray(d.values, dtype=float)) for d in das]
+    vals = np.concatenate(vals) if vals else np.array([])
+    vals = vals[np.isfinite(vals)]
+
+    if vals.size == 0:
+        return None, None
+
+    vmin, vmax = np.nanpercentile(vals, q)
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+        return None, None
+
+    return float(vmin), float(vmax)
+
+
+def _points_up_to_iteration(recommended_df: pd.DataFrame, iteration) -> pd.DataFrame:
+    """
+    Rows of `recommended_df` placed at or before `iteration`.
+
+    Honours the `greedy_iteration` column if present (set by
+    `enforce_min_distance`), otherwise falls back to the index.
+    """
+    if "greedy_iteration" in recommended_df.columns:
+        return recommended_df.loc[recommended_df["greedy_iteration"] <= iteration]
+    return recommended_df.loc[recommended_df.index <= iteration]
+
+
+def _point_labels(df: pd.DataFrame) -> list:
+    """1-based priority labels for annotation."""
+    if "priority" in df.columns:
+        return [str(int(v)) for v in df["priority"].values]
+    try:
+        return [str(int(i) + 1) for i in df.index.values]
+    except (TypeError, ValueError):
+        return [str(i + 1) for i in range(len(df))]
+
+
+# def _save_fig(config, fig, save_path: Path):
+#     """
+#     Save a specific figure via `_finish_plot`.
+#
+#     `_finish_plot` operates on the current pyplot figure, so make `fig` current
+#     before handing off. Needed because the multipane figure stays open while
+#     the per-iteration figures are created.
+#     """
+#     import matplotlib.pyplot as plt
+#
+#     plt.figure(fig.number)
+#     _finish_plot(config, save_path)
+
+def _save_fig(config, fig, save_path: Path):
+    """Save a specific figure via `_finish_plot`, tolerating either signature."""
+    import inspect
+    import matplotlib.pyplot as plt
+
+    try:
+        accepts_fig = "fig" in inspect.signature(_finish_plot).parameters
+    except (TypeError, ValueError):
+        accepts_fig = False
+
+    if accepts_fig:
+        _finish_plot(config, save_path, fig=fig)
+    else:
+        plt.figure(fig.number)
+        _finish_plot(config, save_path)
+
+
+def _draw_acquisition_panel(
+    ax,
+    da: xr.DataArray,
+    points_df: pd.DataFrame,
+    x1_name: str,
+    x2_name: str,
+    *,
+    vmin=None,
+    vmax=None,
+    cmap="viridis",
+    add_colorbar=False,
+    highlight_last=False,
+    annotate=True,
+    title=None,
+    show_legend=False,
+    axis_labels=False,
+    overlays=None,
+    search_mask=None
+):
+    """
+    Draw a single acquisition-surface panel with sensor placements.
+
+    This is the single rendering path used by both the per-iteration PNGs and
+    the multipane figure -- extend here (cartopy features, existing buoys,
+    bathymetry contours, ...) and both outputs inherit the change.
+
+    Returns
+    -------
+    The mappable artist (for building a shared colorbar).
+    """
+    import matplotlib.patheffects as pe
+
+    mappable = da.plot(
+        ax=ax,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        add_colorbar=add_colorbar,
+        add_labels=False,
+    )
+
+    if search_mask is not None:
+        _draw_excluded_region(ax, search_mask)
+
+    _draw_overlays(ax, overlays)
+
+    if points_df is not None and len(points_df) > 0:
+        labels = _point_labels(points_df)
+
+        if highlight_last and len(points_df) > 1:
+            prev_df = points_df.iloc[:-1]
+            new_df = points_df.iloc[-1:]
+            prev_labels = labels[:-1]
+            new_labels = labels[-1:]
+        elif highlight_last:
+            prev_df = points_df.iloc[:0]
+            new_df = points_df
+            prev_labels = []
+            new_labels = labels
+        else:
+            prev_df = points_df
+            new_df = points_df.iloc[:0]
+            prev_labels = labels
+            new_labels = []
+
+        if len(prev_df) > 0:
+            ax.scatter(
+                prev_df[x2_name],
+                prev_df[x1_name],
+                facecolors="none",
+                edgecolors="white",
+                linewidths=1.4,
+                s=70,
+                zorder=5,
+                label="Previously placed",
+            )
+
+        if len(new_df) > 0:
+            ax.scatter(
+                new_df[x2_name],
+                new_df[x1_name],
+                facecolors="none",
+                edgecolors="red",
+                linewidths=1.8,
+                s=90,
+                zorder=6,
+                label="New this iteration" if highlight_last else "Recommended sensors",
+            )
+
+        if annotate:
+            stroke = [pe.withStroke(linewidth=2.0, foreground="black")]
+            for (_, row), label, color in [
+                *[(r, l, "white") for r, l in zip(prev_df.iterrows(), prev_labels)],
+                *[(r, l, "red") for r, l in zip(new_df.iterrows(), new_labels)],
+            ]:
+                ax.text(
+                    row[x2_name],
+                    row[x1_name],
+                    label,
+                    color=color,
+                    fontsize=8,
+                    fontweight="bold",
+                    ha="center",
+                    va="center",
+                    zorder=7,
+                    path_effects=stroke,
+                )
+
+    if title:
+        ax.set_title(title, fontsize=10)
+    if axis_labels:
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+    else:
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+
+    if show_legend:
+        ax.legend(loc="best", fontsize=8, framealpha=0.8)
+
+    return mappable
+
+
+def build_plot_overlays(
+    context_latlon=None,
+    search_exclusion_points=None,
+    extra_layers=None,
+) -> list:
+    """
+    Assemble overlay layer specs for the acquisition panels.
+
+    Each layer is a dict understood by `_draw_overlays`:
+        {lats, lons, label, marker, facecolor, edgecolor, s, linewidth, alpha}
+
+    Parameters
+    ----------
+    context_latlon : tuple(np.ndarray, np.ndarray) or None
+        (lats, lons) of the fixed context sensors actually fed to the model.
+    search_exclusion_points : list[tuple[float, float]] or None
+        (lat, lon) pairs used to carve exclusion buffers out of the search grid.
+    extra_layers : list[dict] or None
+        Pre-built layer dicts appended as-is.
+    """
+    layers = []
+
+    if context_latlon is not None:
+        lats, lons = context_latlon
+        if len(lats):
+            layers.append({
+                "lats": lats, "lons": lons,
+                "label": f"Active buoys / context (n={len(lats)})",
+                "marker": "^", "facecolor": "none", "edgecolor": "white",
+                "s": 55, "linewidth": 1.3,
+            })
+
+    if search_exclusion_points:
+        ex = np.asarray(search_exclusion_points, dtype=float)
+        layers.append({
+            "lats": ex[:, 0], "lons": ex[:, 1],
+            "label": f"Excluded sites (n={len(ex)})",
+            "marker": "x", "facecolor": "none", "edgecolor": "0.75",
+            "s": 40, "linewidth": 1.1, "alpha": 0.8,
+        })
+
+    if extra_layers:
+        layers.extend(extra_layers)
+
+    return layers
+
+
+def _draw_overlays(ax, overlays, zorder=4):
+    """Scatter each overlay layer onto `ax`."""
+    for layer in overlays or []:
+        lats = np.asarray(layer.get("lats", []), dtype=float)
+        lons = np.asarray(layer.get("lons", []), dtype=float)
+        if lats.size == 0:
+            continue
+        ax.scatter(
+            lons, lats,
+            marker=layer.get("marker", "^"),
+            facecolors=layer.get("facecolor", "none"),
+            edgecolors=layer.get("edgecolor", "white"),
+            s=layer.get("s", 50),
+            linewidths=layer.get("linewidth", 1.2),
+            alpha=layer.get("alpha", 0.95),
+            zorder=zorder,
+            label=layer.get("label"),
+        )
+
+
+def _draw_excluded_region(ax, search_mask, color="0.55", alpha=0.35):
+    """Shade cells where the search mask is False (land, shallows, buffers)."""
+    from matplotlib.colors import ListedColormap
+
+    excluded = ~search_mask.astype(bool)
+    excluded = excluded.where(excluded)  # True -> 1.0, False -> NaN
+    excluded.plot(
+        ax=ax,
+        cmap=ListedColormap([color]),
+        vmin=0, vmax=1,
+        alpha=alpha,
+        add_colorbar=False,
+        add_labels=False,
+        zorder=2,
+    )
+
+def plot_active_learning_results(
+    recommended_df: pd.DataFrame,
+    acquisition_ds: xr.DataArray,
+    config,
+    output_dir: Path,
+    acquisition_name: str,
+    x1_name="lat",
+    x2_name="lon",
+    *,
+    overlays=None,
+    search_mask=None,
+    shade_excluded=True,
+    shade_excluded_multipane=False,
+    cmap="viridis",
+    shared_color_scale=True,
+    max_panel_cols=4,
+    max_panels=12,
+    plot_individual=True,
+    plot_multipane=True,
+):
+    """
+    Plot acquisition surfaces and selected sensor locations.
+
+    Produces:
+      - one PNG per greedy iteration (`acquisition_iteration_<k>.png`)
+      - a multipane summary of all/most iterations (`acquisition_iterations_grid.png`)
+      - a final map of recommended locations (`recommended_sensor_locations.png`)
+
+    Parameters
+    ----------
+    shared_color_scale : bool
+        Use one robust (2-98th percentile) color range across all iterations so
+        panels are directly comparable. If False, each panel autoscales.
+    max_panel_cols : int
+        Column cap for the auto-chosen grid layout.
+    max_panels : int or None
+        Max panels in the multipane figure; extra iterations are evenly
+        subsampled (first and last always kept). None = include all.
+    """
+    import matplotlib.pyplot as plt
+
+    output_dir = Path(output_dir)
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    mask_full = search_mask if shade_excluded else None
+    mask_panel = search_mask if (shade_excluded and shade_excluded_multipane) else None
+
+    # Tolerate a surface without an explicit iteration dim (single placement)
+    if "iteration" not in acquisition_ds.dims:
+        acquisition_ds = acquisition_ds.expand_dims("iteration")
+
+    iterations = list(acquisition_ds.iteration.values)
+
+    # Pre-compute the time-mean surface per iteration (reused by both outputs)
+    surfaces = {int(it): _iteration_surface(acquisition_ds, it) for it in iterations}
+
+    if shared_color_scale:
+        vmin, vmax = _robust_limits(list(surfaces.values()))
+    else:
+        vmin, vmax = None, None
+
+    # -----------------------------------------------------------------
+    # 1. Individual per-iteration PNGs
+    # -----------------------------------------------------------------
+    if plot_individual:
+        for it in iterations:
+            it_int = int(it)
+            subset = _points_up_to_iteration(recommended_df, it)
+
+            fig, ax = plt.subplots(figsize=(8, 6))
+            _draw_acquisition_panel(
+                ax,
+                surfaces[it_int],
+                subset,
+                x1_name,
+                x2_name,
+                vmin=vmin,
+                vmax=vmax,
+                cmap=cmap,
+                add_colorbar=True,
+                highlight_last=True,
+                title=(
+                    f"Active Learning Iteration {it_int + 1}\n"
+                    f"Acquisition: {acquisition_name}"
+                ),
+                show_legend=True,
+                axis_labels=True,
+                overlays=overlays,
+                search_mask=mask_full
+            )
+
+            _save_fig(
+                config, fig, plots_dir / f"acquisition_iteration_{it_int + 1}.png"
+            )
+
+    # -----------------------------------------------------------------
+    # 2. Multipane summary across iterations
+    # -----------------------------------------------------------------
+    if plot_multipane:
+        panel_its = _select_panel_iterations(iterations, max_panels)
+        nrows, ncols = panel_grid_shape(len(panel_its), max_cols=max_panel_cols)
+
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=(4.2 * ncols, 3.8 * nrows),
+            sharex=True,
+            sharey=True,
+            squeeze=False,
+            constrained_layout=True,
+        )
+        flat_axes = axes.ravel()
+        mappable = None
+
+        for panel_idx, it in enumerate(panel_its):
+            it_int = int(it)
+            ax = flat_axes[panel_idx]
+            subset = _points_up_to_iteration(recommended_df, it)
+
+            mappable = _draw_acquisition_panel(
+                ax,
+                surfaces[it_int],
+                subset,
+                x1_name,
+                x2_name,
+                vmin=vmin,
+                vmax=vmax,
+                cmap=cmap,
+                add_colorbar=not shared_color_scale,
+                highlight_last=True,
+                title=f"Iteration {it_int + 1}",
+                show_legend=(panel_idx == 0),
+                axis_labels=False,
+                overlays=overlays,
+                search_mask=mask_panel
+            )
+
+        # Blank out unused cells
+        for ax in flat_axes[len(panel_its):]:
+            ax.set_visible(False)
+
+        # Outer axis labels only
+        for r in range(nrows):
+            axes[r, 0].set_ylabel("Latitude")
+        for c in range(ncols):
+            bottom_r = nrows - 1
+            while bottom_r > 0 and not axes[bottom_r, c].get_visible():
+                bottom_r -= 1
+            axes[bottom_r, c].set_xlabel("Longitude")
+
+        if shared_color_scale and mappable is not None:
+            cbar = fig.colorbar(
+                mappable,
+                ax=axes.ravel().tolist(),
+                shrink=0.85,
+                pad=0.02,
+            )
+            cbar.set_label(f"{acquisition_name} acquisition value")
+
+        suptitle = (
+            f"{config.lake.upper()} — Greedy Sensor Placement\n"
+            f"Acquisition: {acquisition_name}"
+        )
+        if len(panel_its) < len(iterations):
+            suptitle += (
+                f"  (showing {len(panel_its)} of {len(iterations)} iterations)"
+            )
+        fig.suptitle(suptitle, fontsize=13)
+
+        _save_fig(config, fig, plots_dir / "acquisition_iterations_grid.png")
+
+    # -----------------------------------------------------------------
+    # 3. Final recommended locations map (mean surface)
+    # -----------------------------------------------------------------
+    final_surface = acquisition_ds.mean(
+        [d for d in ("iteration", "time") if d in acquisition_ds.dims], skipna=True
+    ).squeeze(drop=True)
+
+    f_vmin, f_vmax = _robust_limits(final_surface)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _draw_acquisition_panel(
+        ax,
+        final_surface,
+        recommended_df,
+        x1_name,
+        x2_name,
+        vmin=f_vmin,
+        vmax=f_vmax,
+        cmap=cmap,
+        add_colorbar=True,
+        highlight_last=False,
+        title=(
+            f"Recommended Sensor Locations\n"
+            f"{config.lake.upper()} — Acquisition: {acquisition_name}"
+        ),
+        show_legend=True,
+        axis_labels=True,
+        overlays=overlays,
+        search_mask=mask_full
+    )
+
+    _save_fig(config, fig, plots_dir / "recommended_sensor_locations.png")
+
+    print(f"Active learning plots saved to: {plots_dir}")
