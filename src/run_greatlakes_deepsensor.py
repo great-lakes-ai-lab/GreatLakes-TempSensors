@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import yaml
 import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 
@@ -118,6 +119,17 @@ def main():
         print(f"Generating {len(val_dates)} validation tasks")
         val_tasks = gen_tasks(tl_config, val_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "val"), vary_n_context=tc.vary_n_context, n_context=tc.n_context_points)
 
+        # Adding in fixed train-monitor set
+        train_monitor_tasks = None
+        if tc.use_train_monitor:
+            from numpy import linspace
+            _, train_pool, _ = make_train_date_sampler(config)
+            n_mon = len(val_dates)
+            idx = linspace(0, len(train_pool) - 1, min(n_mon, len(train_pool))).round().astype(int)
+            monitor_dates = train_pool[idx]  # evenly spaced, so seasons are balanced like val
+            print(f"Generating {len(monitor_dates)} train-monitor tasks")
+            train_monitor_tasks = gen_tasks(tl_config, monitor_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "train_monitor"), vary_n_context=tc.vary_n_context, n_context=tc.n_context_points)  # no task_ratios -> random-only, matching val)
+
         if tc.train_date_mode == "random":
             date_sampler, _, _ = make_train_date_sampler(config)
         else:
@@ -157,7 +169,7 @@ def main():
             train_task_sampler = None
 
         model = build_model(config, bundle, tl_config.task_loader)
-        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler)
+        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler, train_monitor_tasks=train_monitor_tasks)
 
 
         print(f"\nBest RMSE: {results['best_val_rmse']:.4f} at epoch {results['best_epoch']}")
@@ -218,8 +230,8 @@ if __name__ == "__main__":
     sys.argv = [
         "run_greatlakes_deepsensor.py",
         "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Oct5_Erie_Strong/al_config.yaml",
-        "--stage", "train",
-        # "--stage", "active_learning"
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
+        "--stage", "evaluate",
+        # "--stage", "skill_curve",
     ]
     main()

@@ -165,6 +165,8 @@ class TrainingConfig:
     train_date_fraction: float = 0.05  # mode=random: fraction of daily pool per epoch
     n_train_dates_per_epoch: int = None  # mode=random: absolute override of fraction
     val_date_stride: int = 5  # val dates are always deterministic
+    use_train_monitor: bool = True
+    train_monitor_interval: int = 3
 
     n_context_points: int = 50
     vary_n_context: bool = True
@@ -285,6 +287,7 @@ class EvaluationConfig:
         default_factory=lambda: [5, 10, 25, 50, 100, 200]
     )
     seeds: list = field(default_factory=lambda: [0, 1, 2])
+    compare_active: bool = True
 
     VALID_SPLITS = ("train", "val", "test")
 

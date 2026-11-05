@@ -18,6 +18,7 @@ now and remains correct if coverage becomes date-dependent later.
 import numpy as np
 import torch
 import xarray as xr
+import warnings
 
 
 # -----------------------------------------------------------------------

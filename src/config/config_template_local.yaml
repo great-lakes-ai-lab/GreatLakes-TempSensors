@@ -85,6 +85,9 @@ training:
   train_range: [["2018-01-01", "2018-12-31"], ["2016-01-01", "2016-12-31"], ["2020-01-01", "2020-12-31"], ["2022-01-01", "2022-12-31"]] # The range of data exposed to the model for training
   val_range: [["2015-01-01", "2015-12-31"], ["2021-01-01", "2021-12-31"], ["2023-01-01", "2023-12-31"]] # The range of data exposed for validation
   test_range: [["2017-01-01", "2017-12-31"], ["2019-01-01", "2019-12-31"]]
+  train_months_drop: [ 12, 1, 2, 3 ]
+  val_months_drop: [ 12, 1, 2, 3 ]
+  test_months_drop: [ 12, 1, 2, 3 ]
 
   # --- Date selection ---
   train_date_mode: random     # "strided" (fixed every-Nth-day set) or "random" (fresh draw each epoch)
@@ -92,6 +95,8 @@ training:
   train_date_fraction: 0.30   # mode=random only: fraction of all daily dates in train_range drawn per epoch
   n_train_dates_per_epoch:   # mode=random only: blank/null -> use fraction; set an int to pin the count
   val_date_stride: 7         # Stride for validation dates. Always deterministic (same set every epoch)
+  use_train_monitor: true
+  train_monitor_interval: 3
 
   # --- Context sampling ---
   resample_tasks_per_epoch: true  # Regenerate context points each epoch (Andersson-style). If false, one fixed task set is reused.
@@ -101,12 +106,27 @@ training:
   max_n_context: 200  # If vary_n_context is true, then the highest possible random number of context points
   train_task_seed: 1000  # Per-epoch task seed = train_task_seed + epoch. Change for a different resampling stream.
 
-  # --- Optimization ---
-  n_epochs: 60  # How many epochs the training loop will go for
-  lr: 5.0e-5  # The learning rate. This is the default
-  patience: 15  # Number of training iterations with no improvement before early exit of training
-  internal_density: 350  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+  # --- Task Context Point
+  active_buoy_points_path: /Users/jagraha/dev/deepsensor_projects/data/buoy/pretend_locations/actual_erie_2025.geojson
+  train_tasks_fully_random: 0.4
+  train_tasks_active_plus_random: 0.25
+  train_tasks_subset_active_plus_random: 0.3
+  train_tasks_active_only: 0.05
+  train_tasks_per_date: 1.2  # Average tasks generated per date (>1.0 lets some dates contribute to multiple sampling modes); only applied when task_ratios is set.
 
+  # --- Optimization ---
+  n_epochs: 125  # How many epochs the training loop will go for
+  lr: 1.0e-4  # The learning rate. This is the default=5.0e-5
+  patience: 30  # Number of training iterations with no improvement before early exit of training
+  # --- Model Specification ----
+  internal_density: 300  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+  n_unet_layers: 4
+  unet_kernel_size: 5
+  unet_channels: 64  # Not going to mess with the default for now
+  # --- Model Dev Plots. Applies only to preview mode
+  internal_density_sweep: [50, 100, 200, 300, 500]
+  n_unet_layer_sweep: [4, 6]
+  unet_kernel_size_sweeep: [3,5]
 
 evaluation:
   name: default
@@ -114,6 +134,7 @@ evaluation:
   date_subsample_factor: 7    # Stride over the split range. 7 = weekly.
   n_context_sweep: [5, 10, 25, 50, 100, 150, 200]  # RMSE is meaningless without stating n_context
   seeds: [0, 1, 33, 19, 91]            # Random context placements; spread = baseline envelope for AL
+  compare_active: true # uses training.active_buoy_points_path
 
 
 prediction:

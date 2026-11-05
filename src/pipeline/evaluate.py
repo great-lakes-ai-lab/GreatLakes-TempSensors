@@ -123,6 +123,11 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
     if not sweep_rows:
         raise RuntimeError("Evaluation produced no results.")
 
+    active = None
+    if getattr(ec, "compare_active", False):
+        active = _evaluate_active(config, bundle, tl_config, model, dates)
+
+
     sweep_df = pd.DataFrame(sweep_rows)
     per_task_df = pd.DataFrame(all_per_task)
 
@@ -186,9 +191,6 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
             for _, r in grp.iterrows()
         }
 
-
-
-
     # Load training metadata for provenance
     train_meta_path = Path(config.paths.model_dir) / "training_metadata.json"
     train_meta = {}
@@ -219,6 +221,8 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
         "sweep": agg.to_dict(orient="records"),
         "sweep_raw": sweep_df.to_dict(orient="records"),
         "monthly": monthly,
+        "active_network": active["summary"] if active else None,
+        "active_monthly": (active["monthly_stats"].to_dict(orient="records") if active else None),
         "monthly_schema": {
             "rmse_pooled": "sqrt(mean(per-task MSE)) over all seeds; matches `sweep` convention",
             "rmse_mean_over_seeds": "mean over seeds of per-seed sqrt(mean(MSE)); plotted centre",
@@ -233,11 +237,24 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
         json.dump(results, f, indent=4)
     per_task_df.to_csv(out_dir / "per_task_scores.csv", index=False)
     monthly_stats.to_csv(out_dir / "monthly_scores.csv", index=False)
+    if active:
+        active["per_task"].to_csv(out_dir / "active_per_task_scores.csv", index=False)
 
-    _plot_skill_curve(config, agg, split, out_dir)
-    _plot_monthly_skill(config, per_task_df, split, out_dir, stats=monthly_stats)
+    active_summary = active["summary"] if active else None
+    active_monthly = active["monthly_stats"] if active else None
+
+    _plot_skill_curve(config, agg, split, out_dir, active=active_summary)
+    _plot_monthly_skill(config, per_task_df, split, out_dir,
+                        stats=monthly_stats, active_stats=active_monthly)
+
+    # _plot_skill_curve(config, agg, split, out_dir)
+    # _plot_monthly_skill(config, per_task_df, split, out_dir, stats=monthly_stats)
 
     print(f"\n--- Evaluation summary (split={split}) ---")
+    if active:
+        a = active["summary"]
+        print(f"  [active network, n={a['n_active']}] rmse={a['rmse']:.4f} | "
+              f"nll={a['nll']:.4f} | cov1σ={a['coverage_1sigma'] * 100:.1f}%")
     for _, r in agg.iterrows():
         print(f"  n_context={int(r['n_context']):>4} | "
               f"rmse={r['rmse_mean']:.4f} ± {r['rmse_std']:.4f} | "
@@ -251,10 +268,17 @@ def run_evaluation(config, bundle, tl_config, split: str = None):
     return results
 
 
-def _plot_skill_curve(config, agg, split, out_dir):
+def _plot_skill_curve(config, agg, split, out_dir, active=None):
     """RMSE / NLL / calibration vs number of context points."""
     import matplotlib.pyplot as plt
     from pipeline.plotting import _finish_plot
+
+    def _active_ref(ax, y, color, label, ls="--"):
+        if active is None:
+            return
+        ax.axhline(y, color=color, ls=ls, lw=1.5, alpha=0.85, label=label)
+        ax.plot([active["n_context_mean"]], [y], marker="*", ms=13,
+                color=color, mec="black", zorder=5)
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     x = agg["n_context"].values
@@ -273,6 +297,8 @@ def _plot_skill_curve(config, agg, split, out_dir):
     ax.set_xlabel("Number of context points")
     ax.set_ylabel("RMSE (physical units)")
     ax.set_title("Skill vs Context Size\n(random placement baseline)")
+    _active_ref(ax, active["rmse"], "black",
+                f"Active network (n={active['n_active']})") if active else None
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -289,6 +315,8 @@ def _plot_skill_curve(config, agg, split, out_dir):
     ax.set_xlabel("Number of context points")
     ax.set_ylabel("NLL (nats)")
     ax.set_title("Predictive Likelihood vs Context Size\n(lower is better)")
+    _active_ref(ax, active["nll"], "black",
+                f"Active network (n={active['n_active']})") if active else None
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -305,6 +333,11 @@ def _plot_skill_curve(config, agg, split, out_dir):
     ax.set_ylabel("Coverage (%)")
     ax.set_ylim(0, 105)
     ax.set_title("Calibration vs Context Size\n(above ideal = overdispersed)")
+    if active:
+        _active_ref(ax, active["coverage_1sigma"] * 100, "darkgreen",
+                    "Active 1σ", ls="-.")
+        _active_ref(ax, active["coverage_2sigma"] * 100, "indigo",
+                    "Active 2σ", ls="-.")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -407,7 +440,7 @@ def _monthly_stats(per_task_df: pd.DataFrame) -> pd.DataFrame:
     return stats.sort_values(["n_context", "month"]).reset_index(drop=True)
 
 
-def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
+def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None, active_stats=None):
     """
     Seasonal skill vs context size: 2 rows (RMSE, NLL) x 3 panels
     (lines over months | raw heatmap | change vs smallest context size),
@@ -453,6 +486,17 @@ def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
     interior = [m for m in range(months[0], months[-1] + 1) if m not in months]
 
     x = np.arange(len(months))
+
+    have_active = active_stats is not None and not active_stats.empty
+    n_act = int(active_stats["n_context"].iloc[0]) if have_active else None
+
+    def active_series(col):
+        if not have_active:
+            return None
+        return (active_stats.set_index("month")[col]
+                .reindex(months).to_numpy(dtype=float))
+
+
     colors = plt.get_cmap("viridis")(np.linspace(0.08, 0.92, len(ncs)))
 
     fig = plt.figure(figsize=(19, 11))
@@ -479,7 +523,7 @@ def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
     ax_bar.grid(True, axis="y", alpha=0.3)
 
     # --- line panels ------------------------------------------------------
-    def lines(ax, M, SD, ylabel, title):
+    def lines(ax, M, SD, ylabel, title, active_vals=None):
         for i, nc in enumerate(ncs):
             y = np.ma.masked_invalid(M[i])
             ax.plot(x, y, "o-", ms=4, lw=1.6, color=colors[i],
@@ -489,12 +533,21 @@ def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
                 ok = np.isfinite(lo) & np.isfinite(hi)
                 ax.fill_between(x, lo, hi, where=ok,
                                 color=colors[i], alpha=0.13, lw=0)
+        act_handle = None
+        if active_vals is not None:
+            (act_handle,) = ax.plot(
+                x, np.ma.masked_invalid(active_vals), "--", marker="*",
+                ms=8, lw=1.8, color="black", zorder=4,
+                label=f"active (n={n_act})",
+            )
         ax.set_xticks(x)
         ax.set_xticklabels(labels)
         ax.set_xlabel("Month (observed only)")
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.grid(True, alpha=0.3)
+        if act_handle is not None and len(ncs) > 6:
+            ax.legend(handles=[act_handle], fontsize=8, loc="best")
         if len(ncs) <= 6:
             leg = ax.legend(title="n_context", fontsize=8, title_fontsize=8,
                             ncol=2 if len(ncs) > 3 else 1)
@@ -511,12 +564,14 @@ def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
 
     ax_r_line = fig.add_subplot(gs[1, 0], sharex=ax_bar)
     lines(ax_r_line, rmse, rmse_sd, "RMSE (physical units)",
-          "RMSE by month\n(shading = ±1σ across seeds)")
+          "RMSE by month\n(shading = ±1σ across seeds)",
+          active_vals=active_series("rmse_mean_over_seeds"))
 
     ax_n_line = fig.add_subplot(gs[2, 0], sharex=ax_bar)
     if have_nll:
         lines(ax_n_line, nll, nll_sd, "NLL (nats)",
-              "NLL by month\n(lower is better)")
+              "NLL by month\n(lower is better)",
+              active_vals=active_series("nll_mean"))
     else:
         ax_n_line.set_axis_off()
         ax_n_line.text(0.5, 0.5, "NLL unavailable", ha="center", va="center",
@@ -615,3 +670,52 @@ def _plot_monthly_skill(config, per_task_df, split, out_dir, stats=None):
     )
     plt.tight_layout(rect=(0, 0, 1, 0.94))
     _finish_plot(config, out_dir / "monthly_skill_vs_ncontext.png")
+
+
+def _evaluate_active(config, bundle, tl_config, model, dates):
+    """Score the fixed active-buoy network on the same dates as the sweep.
+
+    Context is deterministic, so this is one pass regardless of `seeds`.
+    """
+    from pipeline.active_learning import load_context_points
+
+    active_points = load_context_points(config.training.active_buoy_points_path, bundle)
+    n_active = int(active_points.shape[1])
+
+    tasks = gen_tasks(
+        tl_config, dates, bundle, config,
+        fixed_context_points=active_points,
+        seed=0, progress=False,
+    )
+    if not tasks:
+        print("  [active] no tasks generated; skipping comparison")
+        return None
+
+    scores = compute_weighted_scores(
+        model, tasks, bundle, tl_config.task_loader, return_per_task=True,
+    )
+
+    per_task = pd.DataFrame(scores["per_task"]).rename(
+        columns={"n_context": "n_context_actual"}  # after NaN/ice removal
+    )
+    per_task["n_context"] = n_active
+    per_task["seed"] = 0
+
+    summary = {
+        "n_active": n_active,
+        "n_context_mean": float(per_task["n_context_actual"].mean()),
+        "n_tasks": scores["n_tasks"],
+        "rmse": scores["rmse"],
+        "mae": scores["mae"],
+        "bias": scores["bias"],
+        "nll": scores["nll"],
+        "coverage_1sigma": scores["coverage_1sigma"],
+        "coverage_2sigma": scores["coverage_2sigma"],
+        "mean_std": scores["mean_std"],
+    }
+    print(f"  [active] n={n_active} (mean kept {summary['n_context_mean']:.1f}) | "
+          f"rmse={summary['rmse']:.4f}  nll={summary['nll']:.4f}  "
+          f"cov1σ={summary['coverage_1sigma']*100:.1f}%")
+
+    return {"summary": summary, "per_task": per_task,
+            "monthly_stats": _monthly_stats(per_task)}

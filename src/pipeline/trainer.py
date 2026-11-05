@@ -15,7 +15,7 @@ from deepsensor.train import Trainer
 from pipeline.config import PipelineConfig
 from pipeline.model import save_trained_model
 from pipeline.task_builder import TaskLoaderConfig
-from utils.metrics import point_area_weights, weighted_mse, aggregate_rmse, compute_weighted_rmse
+from utils.metrics import point_area_weights, weighted_mse, aggregate_rmse, compute_weighted_rmse, compute_weighted_scores
 
 # Canonical metric identifier, written into training_metadata.json
 METRIC_NAME = "area_weighted_rmse_per_task_mean"
@@ -28,6 +28,7 @@ def train_model(
     bundle: dict,
     config: PipelineConfig,
     train_task_sampler=None,    # callable(epoch) -> list[Task]
+    train_monitor_tasks=None
 ) -> dict:
 
     if isinstance(task_loader, TaskLoaderConfig):
@@ -35,17 +36,28 @@ def train_model(
 
     tc = config.training
     trainer = Trainer(model, lr=tc.lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        trainer.opt, T_max=tc.n_epochs, eta_min=tc.lr * 0.02
+    )
 
     losses = []
     val_rmses = []
     train_rmses = []
+    learning_rates = []
     best_val_rmse = np.inf
     best_epoch = 0
     epochs_without_improvement = 0
     best_per_task_details = []
 
+    # Adding 11/4/26 trying to help make train and val converge
+    best_score = np.inf
+    val_nlls, val_cov1, val_std = [], [], []
+    w_rmse = getattr(tc, "ckpt_rmse_weight", 0.5)  # 1.0 = pure RMSE, 0.0 = pure NLL
+    min_delta = getattr(tc, "ckpt_min_delta", 0.005)  # in log units (~0.5%)
+
     # How often to compute training RMSE (expensive, so not every epoch)
-    train_rmse_interval = max(1, tc.n_epochs // 10)
+    # train_rmse_interval = max(1, tc.n_epochs // 10)
+    train_rmse_interval = getattr(tc, "train_monitor_interval", 3)
 
     start_time = time.time()
     t_sample_total = 0.0
@@ -77,25 +89,58 @@ def train_model(
 
         # Validate
         _t0 = time.time()
-        val_result = compute_weighted_rmse(model, val_tasks, bundle, task_loader, return_per_task=True)
-        t_val_total += time.time() - _t0
-        val_rmse = val_result["rmse"]
+        # Replaced 11/4/26 tyring to get rid of train val gap
+        # val_result = compute_weighted_rmse(model, val_tasks, bundle, task_loader, return_per_task=True)
+        # t_val_total += time.time() - _t0
+        # val_rmse = val_result["rmse"]
+        # val_rmses.append(val_rmse)
+        val = compute_weighted_scores(model, val_tasks, bundle, task_loader, return_per_task=True)
+        val_rmse, val_nll = val["rmse"], val["nll"]
         val_rmses.append(val_rmse)
+        val_nlls.append(val_nll)
+        val_cov1.append(val["coverage_1sigma"])
+        val_std.append(val["mean_std"])
 
-        # Training RMSE (periodic)
-        if epoch % train_rmse_interval == 0 or epoch == 1:
-            train_rmse = compute_weighted_rmse(model, train_tasks, bundle, task_loader)["rmse"]
-            train_rmses.append({"epoch": epoch, "rmse": train_rmse})
+        score = w_rmse * np.log(val_rmse) + (1 - w_rmse) * val_nll
+
+
+        # # Training RMSE (periodic)
+        # if epoch % train_rmse_interval == 0 or epoch == 1:
+        #     train_rmse = compute_weighted_rmse(model, train_tasks, bundle, task_loader)["rmse"]
+        #     train_rmses.append({"epoch": epoch, "rmse": train_rmse})
+        if train_monitor_tasks and (epoch % train_rmse_interval == 0 or epoch == 1):
+            mon = compute_weighted_scores(model, train_monitor_tasks, bundle,
+                                          task_loader, return_per_task=False)
+            train_rmses.append({
+                "epoch": epoch,
+                "rmse": mon["rmse"],
+                "nll": mon["nll"],
+                "coverage_1sigma": mon["coverage_1sigma"],
+            })
 
         # Checkpoint best
-        if val_rmse < best_val_rmse:
+        # if val_rmse < best_val_rmse:
+        #     best_val_rmse = val_rmse
+        #     best_epoch = epoch
+        #     epochs_without_improvement = 0
+        #     best_per_task_details = val_result["per_task"]
+        #     save_trained_model(model, config)
+        # else:
+        #     epochs_without_improvement += 1
+        # replaced 11/4/26
+        if score < best_score - min_delta:
+            best_score = score
             best_val_rmse = val_rmse
             best_epoch = epoch
             epochs_without_improvement = 0
-            best_per_task_details = val_result["per_task"]
+            best_per_task_details = val["per_task"]
             save_trained_model(model, config)
         else:
             epochs_without_improvement += 1
+
+        scheduler.step()
+        lr_now = trainer.opt.param_groups[0]["lr"]
+        learning_rates.append(lr_now)
 
         # Log periodically
         if epoch % 5 == 0 or epoch == 1:
@@ -104,6 +149,8 @@ def train_model(
                 train_rmse_str = f", train_rmse={train_rmses[-1]['rmse']:.4f}"
             print(f"  Epoch {epoch:3d}: loss={epoch_loss:.4f}, "
                   f"val_rmse={val_rmse:.4f}{train_rmse_str}, best={best_val_rmse:.4f} "
+                  f"learning rate={lr_now} "
+                  f"Val_NLL={val_nll:.4f} cov1={val['coverage_1sigma']}"
                   f"(patience: {epochs_without_improvement}/{tc.patience if tc.patience > 0 else '∞'})")
 
         # Early stopping check
@@ -117,6 +164,7 @@ def train_model(
             torch.cuda.empty_cache()
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
+
 
     elapsed = time.time() - start_time
     elapsed_min = elapsed / 60.0
@@ -136,8 +184,13 @@ def train_model(
     results = {
         "losses": losses,
         "val_rmses": val_rmses,
+        "train_rmse_interval": train_rmse_interval,
         "train_rmses": train_rmses,
+        "learning_rates": learning_rates,
         "best_val_rmse": float(best_val_rmse),
+        "val_nlls": val_nlls,
+        "val_cov1s": val_cov1,
+        "val_stds": val_std,
         "best_epoch": best_epoch,
         "total_epochs": len(losses),
         "early_stopped": tc.patience > 0 and epochs_without_improvement >= tc.patience,
@@ -242,6 +295,12 @@ def _save_training_metadata(config: PipelineConfig, results: dict):
         "final_train_loss": results["losses"][-1],
         "losses": [float(l) for l in results["losses"]],
         "val_rmses": [float(r) for r in results["val_rmses"]],
+        "train_rmse_interval": results["train_rmse_interval"],
+        "train_rmses": [float(r['rmse']) for r in results["train_rmses"]],
+        "learning_rates": [float(f"{l:.2e}") for l in results["learning_rates"]],
+        "val_nlls": [float(v) for v in results["val_nlls"]],
+        "val_cov1s": [float(v) for v in results["val_cov1s"]],
+        "val_stds": [float(v) for v in results["val_stds"]],
         "training_time_seconds": results["training_time_seconds"],
         "training_time_minutes": results["training_time_minutes"],
         "time_sampling_seconds": results["time_sampling_seconds"],
