@@ -25,13 +25,13 @@ data_sources:
     role: context
     sampling: all
     fill_values: []
-#  ice_concentration:
-#    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/ice_concentration.zarr
-#    format: zarr
-#    variable: ice_concentration
-#    role: context
-#    sampling: all
-#    fill_values: []
+  ice_concentration:
+    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/ice_concentration.zarr
+    format: zarr
+    variable: ice_concentration
+    role: context
+    sampling: all
+    fill_values: []
   bathy:
     path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_bathy_depth_3arcsec_clean.nc
     format: netcdf
@@ -47,20 +47,20 @@ data_sources:
       role: mask
       coarsen_factor: 25
       fill_values: []
-#  dist_to_land:
-#    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_dist_to_land_3arcsec.nc
-#    format: netcdf
-#    variable: dist_to_land
-#    role: [context, aux_at_targets]
-#    coarsen_factor: 10
-#    fill_values: []
-#  core_depth:
-#    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/
-#    format: netcdf
-#    variable: core_depth
-#    role: [context, aux_at_targets]
-#    coarsen_factor: 10
-#    fill_values: []
+  dist_to_land:
+    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_dist_to_land_3arcsec.nc
+    format: netcdf
+    variable: dist_to_land
+    role: [context, aux_at_targets]
+    coarsen_factor: 10
+    fill_values: []
+  core_depth:
+    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/
+    format: netcdf
+    variable: core_depth
+    role: [context, aux_at_targets]
+    coarsen_factor: 10
+    fill_values: []
 
 preprocessing:
   # Normalization statistics and the seasonal climatology are fit here.

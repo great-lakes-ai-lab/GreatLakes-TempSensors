@@ -82,6 +82,7 @@ def train_model(
 
         # Train
         _t0 = time.time()
+        print('--------- in Trainer ----------')
         batch_losses = trainer(train_tasks)
         t_train_total += time.time() - _t0
         epoch_loss = float(np.mean(batch_losses))
@@ -94,6 +95,7 @@ def train_model(
         # t_val_total += time.time() - _t0
         # val_rmse = val_result["rmse"]
         # val_rmses.append(val_rmse)
+        print('--------- in validate ----------')
         val = compute_weighted_scores(model, val_tasks, bundle, task_loader, return_per_task=True)
         val_rmse, val_nll = val["rmse"], val["nll"]
         val_rmses.append(val_rmse)
@@ -109,6 +111,7 @@ def train_model(
         #     train_rmse = compute_weighted_rmse(model, train_tasks, bundle, task_loader)["rmse"]
         #     train_rmses.append({"epoch": epoch, "rmse": train_rmse})
         if train_monitor_tasks and (epoch % train_rmse_interval == 0 or epoch == 1):
+            print('--------- in train monitor val ----------')
             mon = compute_weighted_scores(model, train_monitor_tasks, bundle,
                                           task_loader, return_per_task=False)
             train_rmses.append({
@@ -138,6 +141,7 @@ def train_model(
         else:
             epochs_without_improvement += 1
 
+        print('--------- updating lr scheduler ----------')
         scheduler.step()
         lr_now = trainer.opt.param_groups[0]["lr"]
         learning_rates.append(lr_now)
@@ -164,6 +168,7 @@ def train_model(
             torch.cuda.empty_cache()
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
+        print('--------- End of epoch ----------')
 
 
     elapsed = time.time() - start_time

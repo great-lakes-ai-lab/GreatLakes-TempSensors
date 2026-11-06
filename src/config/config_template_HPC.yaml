@@ -16,7 +16,7 @@ data_sources:
     use_anomalies: true  # This will trigger the seasonalcyle processer and compute the anomalies rather than direct values
     sampling: random_lake_points  # random_lake_points: will use the randomly generated N context points, all: uses all points
     variable: sst
-    fill_values: []
+    fill_values: [0.2]
   era5:
     path: /Users/jagraha/Data/ciglr_globus/greatlakes_era5_1995_2025.zarr
     format: zarr
