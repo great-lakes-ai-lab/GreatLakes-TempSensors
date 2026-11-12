@@ -32,6 +32,11 @@ def main():
              "Options: preprocess, train, predict, evaluate, diagnostics, active_learning",
     )
 
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Resume training from the last epoch's resume checkpoint in the run dir",
+    )
+
     args = parser.parse_args()
 
     # 1. Load config (auto-detect AL overlay vs. full pipeline config)
@@ -66,10 +71,17 @@ def main():
             f"To run active learing you must first have a trained model and use the AL template to point at the run dir"
         )
 
+    if args.resume and "train" not in stages:
+        raise ValueError("--resume only applies when 'train' is in --stage")
+
     # Only copy config to run dir if we're modifying outputs
     read_only_stages = {"diagnostics", "predict", "evaluate", "active_learning", "skill_curve"}
     if all(s in read_only_stages for s in stages):
         config.preprocessing.force_reprocess = False
+    elif args.resume:
+        # Reprocessing could change normalization params and silently alter tasks
+        config.preprocessing.force_reprocess = False
+        print("Resume: keeping existing run config and processed cache")
     else:
         copy_config_to_run_dir(config, args.config)
 
@@ -112,6 +124,17 @@ def main():
         print("\n" + "=" * 60)
         print("STAGE: TRAINING")
         print("=" * 60)
+
+        from pipeline.checkpoint import resume_path, peek_resume_epoch
+        from utils.seeds import seed_globals
+
+        if not args.resume and resume_path(config).exists():
+            raise FileExistsError(
+                f"Resume checkpoint exists at {resume_path(config)}. "
+                f"Pass --resume to continue, or delete it (or change run.name) "
+                f"to start fresh."
+            )
+
         tc = config.training
         train_dates, val_dates = make_train_val_dates(config)   # with the revamp of the date selection this really just returns the val dates. train dates gets derived
         # print(f"Generating tasks: {len(train_dates)} train, {len(val_dates)} val")
@@ -137,6 +160,7 @@ def main():
 
         if tc.resample_tasks_per_epoch:
             _cache = {}
+            _report = {"done": False}  # print coverage on the first generated epoch
             def sample_train_tasks(epoch):
                 if epoch in _cache:
                     return _cache.pop(epoch)
@@ -152,24 +176,34 @@ def main():
                     raise RuntimeError(
                         f"Epoch {epoch}: 0 tasks from {len(dates_ep)} dates."
                     )
-                if epoch == 1:
-                    pct = 100 * len(tasks) / len(dates_ep)
-                    print(f"  Task coverage: {len(tasks)}/{len(dates_ep)} dates "
+                if not _report["done"]:
+                    _report["done"] = True
+                    n_dates_ok = len({str(t["time"]) for t in tasks})
+                    pct = 100 * n_dates_ok / len(dates_ep)
+                    print(f"  Task coverage (epoch {epoch}): {len(tasks)}/{len(dates_ep)} dates "
                           f"yielded tasks ({pct:.1f}%)")
                     if pct < 90:
                         print(f"  WARNING: {len(dates_ep) - len(tasks)} dates "
                               f"produced no task. Re-run gen_tasks with "
                               f"verbose=True to inspect.")
                 return tasks
-            train_tasks = sample_train_tasks(1)
-            _cache[1] = train_tasks
+
+            first_epoch = 1
+            if args.resume:
+                done = peek_resume_epoch(config)
+                if done is not None:
+                    first_epoch = min(done + 1, tc.n_epochs)
+            train_tasks = sample_train_tasks(first_epoch)
+            _cache[first_epoch] = train_tasks
             train_task_sampler = sample_train_tasks
         else:
             train_tasks = gen_tasks(tl_config, train_dates, bundle, config, seed=derive_rng(tc.train_task_seed, "fixed_train"))
             train_task_sampler = None
 
+        seed_globals(tc.train_task_seed)
         model = build_model(config, bundle, tl_config.task_loader)
-        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler, train_monitor_tasks=train_monitor_tasks)
+        # print(sum(float(p.sum()) for p in model.model.parameters()))
+        results = train_model(model, tl_config.task_loader, train_tasks, val_tasks, bundle, config, train_task_sampler=train_task_sampler, train_monitor_tasks=train_monitor_tasks, resume=args.resume)
 
 
         print(f"\nBest RMSE: {results['best_val_rmse']:.4f} at epoch {results['best_epoch']}")
@@ -225,13 +259,14 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 
 if __name__ == "__main__":
 
-    # import sys
-    #
-    # sys.argv = [
-    #     "run_greatlakes_deepsensor.py",
-    #     # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-    #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
-    #     # "--stage", "train",
-    #     "--stage", "skill_curve",
-    # ]
+    import sys
+
+    sys.argv = [
+        "run_greatlakes_deepsensor.py",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
+        "--stage", "train",
+        # "--stage", "skill_curve",
+        # "--resume",
+    ]
     main()

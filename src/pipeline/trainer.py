@@ -15,6 +15,7 @@ from deepsensor.train import Trainer
 from pipeline.config import PipelineConfig
 from pipeline.model import save_trained_model
 from pipeline.task_builder import TaskLoaderConfig
+from pipeline.checkpoint import save_resume_checkpoint, load_resume_checkpoint
 from utils.metrics import point_area_weights, weighted_mse, aggregate_rmse, compute_weighted_rmse, compute_weighted_scores
 
 # Canonical metric identifier, written into training_metadata.json
@@ -28,7 +29,8 @@ def train_model(
     bundle: dict,
     config: PipelineConfig,
     train_task_sampler=None,    # callable(epoch) -> list[Task]
-    train_monitor_tasks=None
+    train_monitor_tasks=None,
+    resume: bool = False,
 ) -> dict:
 
     if isinstance(task_loader, TaskLoaderConfig):
@@ -40,6 +42,7 @@ def train_model(
         trainer.opt, T_max=tc.n_epochs, eta_min=tc.lr * 0.02
     )
 
+    # ----------- Fresh Run Default State ----------------------------------
     losses = []
     val_rmses = []
     train_rmses = []
@@ -48,6 +51,11 @@ def train_model(
     best_epoch = 0
     epochs_without_improvement = 0
     best_per_task_details = []
+    t_sample_total = 0.0
+    t_train_total = 0.0
+    t_val_total = 0.0
+    prior_elapsed = 0.0
+    start_epoch = 1
 
     # Adding 11/4/26 trying to help make train and val converge
     best_score = np.inf
@@ -59,10 +67,57 @@ def train_model(
     # train_rmse_interval = max(1, tc.n_epochs // 10)
     train_rmse_interval = getattr(tc, "train_monitor_interval", 3)
 
-    start_time = time.time()
-    t_sample_total = 0.0
-    t_train_total = 0.0
-    t_val_total = 0.0
+    # --- Restore from resume checkpoint ---------------------------------
+    if resume:
+        ckpt = load_resume_checkpoint(config, model, trainer, scheduler)
+        if ckpt is None:
+            print("Resume requested but no checkpoint found; starting fresh.")
+        else:
+            h, ls, tm = ckpt["history"], ckpt["loop_state"], ckpt["timing"]
+            losses, val_rmses = h["losses"], h["val_rmses"]
+            val_nlls, val_cov1, val_std = h["val_nlls"], h["val_cov1"], h["val_std"]
+            train_rmses, learning_rates = h["train_rmses"], h["learning_rates"]
+            best_score = ls["best_score"]
+            best_val_rmse = ls["best_val_rmse"]
+            best_epoch = ls["best_epoch"]
+            epochs_without_improvement = ls["epochs_without_improvement"]
+            best_per_task_details = ls["best_per_task_details"]
+            t_sample_total, t_train_total, t_val_total = tm["sample"], tm["train"], tm["val"]
+            prior_elapsed = tm["elapsed"]
+            start_epoch = ckpt["epoch"] + 1
+
+
+
+    start_time = time.time() - prior_elapsed
+
+    def _save_resume(epoch):
+        save_resume_checkpoint(
+            config, model, trainer, scheduler, epoch,
+            loop_state={
+                "best_score": best_score,
+                "best_val_rmse": best_val_rmse,
+                "best_epoch": best_epoch,
+                "epochs_without_improvement": epochs_without_improvement,
+                "best_per_task_details": best_per_task_details,
+            },
+            history={
+                "losses": losses, "val_rmses": val_rmses, "val_nlls": val_nlls,
+                "val_cov1": val_cov1, "val_std": val_std,
+                "train_rmses": train_rmses, "learning_rates": learning_rates,
+            },
+            timing={
+                "sample": t_sample_total, "train": t_train_total,
+                "val": t_val_total, "elapsed": time.time() - start_time,
+            },
+        )
+
+    # Already finished? (completed all epochs, or early-stopped under current patience)
+    already_done = start_epoch > tc.n_epochs or (
+            tc.patience > 0 and epochs_without_improvement >= tc.patience
+    )
+    if already_done:
+        print(f"Checkpoint at epoch {start_epoch - 1} is already complete; "
+              f"skipping loop.")
 
     print(f"Training for {tc.n_epochs} epochs | lr={tc.lr} | "
           f"{len(train_tasks)} train tasks | {len(val_tasks)} val tasks")
@@ -74,7 +129,9 @@ def train_model(
     else:
         print("Task resampling: OFF (static train tasks")
 
-    for epoch in tqdm(range(1, tc.n_epochs + 1), desc="Training"):
+    loop_range = [] if already_done else range(start_epoch, tc.n_epochs + 1)
+    for epoch in tqdm(loop_range, desc="Training",
+                      initial=start_epoch - 1, total=tc.n_epochs):
         if train_task_sampler is not None:
             _t0 = time.time()
             train_tasks = train_task_sampler(epoch)
@@ -156,6 +213,8 @@ def train_model(
                   f"learning rate={lr_now} "
                   f"Val_NLL={val_nll:.4f} cov1={val['coverage_1sigma']}"
                   f"(patience: {epochs_without_improvement}/{tc.patience if tc.patience > 0 else '∞'})")
+
+        _save_resume(epoch)
 
         # Early stopping check
         if tc.patience > 0 and epochs_without_improvement >= tc.patience:

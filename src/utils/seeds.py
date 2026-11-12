@@ -1,6 +1,8 @@
 # src/utils/seeds.py
 import zlib
 import numpy as np
+import torch
+import random
 
 
 def derive_rng(*parts) -> np.random.Generator:
@@ -17,3 +19,9 @@ def derive_rng(*parts) -> np.random.Generator:
         for p in parts
     ]
     return np.random.default_rng(np.random.SeedSequence(ints))
+
+
+def seed_globals(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
