@@ -147,12 +147,6 @@ def train_model(
 
         # Validate
         _t0 = time.time()
-        # Replaced 11/4/26 tyring to get rid of train val gap
-        # val_result = compute_weighted_rmse(model, val_tasks, bundle, task_loader, return_per_task=True)
-        # t_val_total += time.time() - _t0
-        # val_rmse = val_result["rmse"]
-        # val_rmses.append(val_rmse)
-        print('--------- in validate ----------')
         val = compute_weighted_scores(model, val_tasks, bundle, task_loader, return_per_task=True)
         val_rmse, val_nll = val["rmse"], val["nll"]
         val_rmses.append(val_rmse)
@@ -162,13 +156,8 @@ def train_model(
 
         score = w_rmse * np.log(val_rmse) + (1 - w_rmse) * val_nll
 
-
         # # Training RMSE (periodic)
-        # if epoch % train_rmse_interval == 0 or epoch == 1:
-        #     train_rmse = compute_weighted_rmse(model, train_tasks, bundle, task_loader)["rmse"]
-        #     train_rmses.append({"epoch": epoch, "rmse": train_rmse})
         if train_monitor_tasks and (epoch % train_rmse_interval == 0 or epoch == 1):
-            print('--------- in train monitor val ----------')
             mon = compute_weighted_scores(model, train_monitor_tasks, bundle,
                                           task_loader, return_per_task=False)
             train_rmses.append({
@@ -198,7 +187,8 @@ def train_model(
         else:
             epochs_without_improvement += 1
 
-        print('--------- updating lr scheduler ----------')
+        t_val_total += time.time() - _t0
+        
         scheduler.step()
         lr_now = trainer.opt.param_groups[0]["lr"]
         learning_rates.append(lr_now)
@@ -227,7 +217,6 @@ def train_model(
             torch.cuda.empty_cache()
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
-        print('--------- End of epoch ----------')
 
 
     elapsed = time.time() - start_time
