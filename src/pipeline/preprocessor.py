@@ -1,11 +1,14 @@
-
 # src/pipeline/preprocessor.py
 """Standardize, compute anomalies, coarsen, fit DataProcessor, build bundle."""
 
 from pathlib import Path
 from typing import Optional
 import json
-
+import os
+import shutil
+import tempfile
+from contextlib import contextmanager
+from time import perf_counter
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -608,8 +611,66 @@ def _save_cache(config: PipelineConfig, bundle: dict):
     print(f"Processed cache saved to: {processed_dir}")
 
 
+@contextmanager
+def processed_read_dir(processed_dir: Path, *, stage: bool):
+    """Provide a read directory without changing persistent output paths."""
+    if not stage:
+        yield processed_dir
+        return
+
+    # /tmp worked in compute-node test.
+    # Override with DEEPSENSOR_TMPDIR when needed.
+    temp_root = Path(
+        os.environ.get("DEEPSENSOR_TMPDIR", "/tmp")
+    ).expanduser()
+
+    if not temp_root.is_dir():
+        raise FileNotFoundError(
+            f"Temporary directory not found: {temp_root}"
+        )
+
+    # Copy only processed NetCDF files and cache metadata.
+    files = [
+        path
+        for path in processed_dir.iterdir()
+        if path.is_file()
+        and (path.suffix == ".nc" or path.name == "metadata.json")
+    ]
+
+    required_bytes = sum(path.stat().st_size for path in files)
+    free_bytes = shutil.disk_usage(temp_root).free
+
+    # A preliminary capacity check; concurrent jobs can still consume space.
+    if free_bytes < required_bytes * 1.1:
+        raise RuntimeError(
+            f"Insufficient staging space in {temp_root}: "
+            f"cache is {required_bytes / 1024**3:.2f} GiB; "
+            f"available space is {free_bytes / 1024**3:.2f} GiB. "
+            "At least 10% additional headroom is required."
+        )
+
+    # Each invocation gets a unique directory, automatically cleaned up
+    # when the with-block exits, including on ordinary exceptions.
+    with tempfile.TemporaryDirectory(
+        prefix="deepsensor-", dir=temp_root
+    ) as tmp:
+        read_dir = Path(tmp)
+        t0 = perf_counter()
+
+        print(
+            f"Staging {len(files)} cache files "
+            f"({required_bytes / 1024**3:.2f} GiB) "
+            f"to {read_dir}"
+        )
+
+        for source in files:
+            shutil.copyfile(source, read_dir / source.name)
+
+        print(f"Staging complete in {perf_counter() - t0:.2f}s")
+        yield read_dir
+
 def load_processed_cache(config: PipelineConfig) -> dict:
-    """Load previously saved processed bundle from disk."""
+    """Load the processed cache into RAM, staging locally on HPC."""
     print("\nNow loading processed cache from disk...")
     processed_dir = Path(config.paths.processed_dir)
     dp_dir = Path(config.paths.data_processor_dir)
@@ -618,50 +679,132 @@ def load_processed_cache(config: PipelineConfig) -> dict:
     data_processor = DataProcessor(str(dp_dir))
     bundle = {"data_processor": data_processor}
 
-    # Load metadata to know what was saved
-    meta_path = processed_dir / "metadata.json"
-    if meta_path.exists():
-        with open(meta_path) as f:
-            metadata = json.load(f)
-        dataset_names = metadata.get("saved_datasets", [])
-    else:
-        # Fallback: load whatever .nc files exist
-        dataset_names = [p.stem for p in processed_dir.glob("*.nc")]
+    use_staging = config.environment == "hpc"
+    load_start = perf_counter()
 
-    for name in dataset_names:
-        path = processed_dir / f"{name}.nc"
-        if path.exists():
-            from time import perf_counter
+    with processed_read_dir(
+        processed_dir, stage=use_staging
+    ) as read_dir:
+        # Read metadata from the selected read-cache directory.
+        meta_path = read_dir / "metadata.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                metadata = json.load(f)
+            dataset_names = metadata.get("saved_datasets", [])
+        else:
+            dataset_names = [
+                p.stem for p in read_dir.glob("*.nc")
+            ]
 
-            t0 = perf_counter()
-            with xr.open_dataset(path) as ds:
-                bundle[name] = ds.load()
+        loaded_count = 0
 
-            print(
-                f"  Loaded {name} into RAM: "
-                f"{bundle[name].nbytes / 1024 ** 3:.2f} GiB "
-                f"in {perf_counter() - t0:.2f}s"
-            )
-            # bundle[name] = xr.open_dataset(path)
+        for name in dataset_names:
+            path = read_dir / f"{name}.nc"
+            if path.exists():
+                t0 = perf_counter()
 
-    # Extract temporal features from mask_time_ds
+                # Materialize arrays before closing the file.
+                with xr.open_dataset(path) as ds:
+                    bundle[name] = ds.load()
+
+                loaded_count += 1
+                print(
+                    f"  Loaded {name} into RAM: "
+                    f"{bundle[name].nbytes / 1024**3:.2f} GiB "
+                    f"in {perf_counter() - t0:.2f}s"
+                )
+
+    # All loaded arrays are now independent of the temporary files.
+    print(
+        f"Processed dataset loading complete: "
+        f"{loaded_count}/{len(dataset_names)} datasets "
+        f"in {perf_counter() - load_start:.2f}s "
+        "(including staging and temporary-file cleanup)"
+    )
+
+    # Extract temporal features from mask_time_ds.
     if "mask_time_ds" in bundle:
         bundle["cosD"] = bundle["mask_time_ds"]["cos_D"]
         bundle["sinD"] = bundle["mask_time_ds"]["sin_D"]
 
-    # Load seasonal processor if available
+    # Seasonal processor still loads from its persistent directory.
     bundle["seasonal_processor"] = None
     if seasonal_dir.exists():
-        nc_files = sorted(seasonal_dir.glob("*_seasonal_cycle.nc"))
-        meta_files = sorted(seasonal_dir.glob("*_seasonal_cycle_metadata.json"))
+        nc_files = sorted(
+            seasonal_dir.glob("*_seasonal_cycle.nc")
+        )
+        meta_files = sorted(
+            seasonal_dir.glob("*_seasonal_cycle_metadata.json")
+        )
         if nc_files and meta_files:
             bundle["seasonal_processor"] = SeasonalCycleProcessor.load(
                 str(nc_files[-1]), str(meta_files[-1])
             )
 
-    print(f"  Loaded {len(dataset_names)} cached datasets")
     if bundle["seasonal_processor"] is not None:
-        print(f"  Loaded seasonal processor (id={bundle['seasonal_processor'].metadata.get('id', '?')})")
+        print(
+            "  Loaded seasonal processor "
+            f"(id={bundle['seasonal_processor'].metadata.get('id', '?')})"
+        )
     else:
         print("  No seasonal processor found in cache")
+
     return bundle
+
+# def load_processed_cache(config: PipelineConfig) -> dict:
+#     """Load previously saved processed bundle from disk."""
+#     print("\nNow loading processed cache from disk...")
+#     processed_dir = Path(config.paths.processed_dir)
+#     dp_dir = Path(config.paths.data_processor_dir)
+#     seasonal_dir = Path(config.paths.seasonal_dir)
+#
+#     data_processor = DataProcessor(str(dp_dir))
+#     bundle = {"data_processor": data_processor}
+#
+#     # Load metadata to know what was saved
+#     meta_path = processed_dir / "metadata.json"
+#     if meta_path.exists():
+#         with open(meta_path) as f:
+#             metadata = json.load(f)
+#         dataset_names = metadata.get("saved_datasets", [])
+#     else:
+#         # Fallback: load whatever .nc files exist
+#         dataset_names = [p.stem for p in processed_dir.glob("*.nc")]
+#
+#     for name in dataset_names:
+#         path = processed_dir / f"{name}.nc"
+#         if path.exists():
+#             from time import perf_counter
+#
+#             t0 = perf_counter()
+#             with xr.open_dataset(path) as ds:
+#                 bundle[name] = ds.load()
+#
+#             print(
+#                 f"  Loaded {name} into RAM: "
+#                 f"{bundle[name].nbytes / 1024 ** 3:.2f} GiB "
+#                 f"in {perf_counter() - t0:.2f}s"
+#             )
+#             # bundle[name] = xr.open_dataset(path)
+#
+#     # Extract temporal features from mask_time_ds
+#     if "mask_time_ds" in bundle:
+#         bundle["cosD"] = bundle["mask_time_ds"]["cos_D"]
+#         bundle["sinD"] = bundle["mask_time_ds"]["sin_D"]
+#
+#     # Load seasonal processor if available
+#     bundle["seasonal_processor"] = None
+#     if seasonal_dir.exists():
+#         nc_files = sorted(seasonal_dir.glob("*_seasonal_cycle.nc"))
+#         meta_files = sorted(seasonal_dir.glob("*_seasonal_cycle_metadata.json"))
+#         if nc_files and meta_files:
+#             bundle["seasonal_processor"] = SeasonalCycleProcessor.load(
+#                 str(nc_files[-1]), str(meta_files[-1])
+#             )
+#
+#     print(f"  Loaded {len(dataset_names)} cached datasets")
+#     if bundle["seasonal_processor"] is not None:
+#         print(f"  Loaded seasonal processor (id={bundle['seasonal_processor'].metadata.get('id', '?')})")
+#     else:
+#         print("  No seasonal processor found in cache")
+#     return bundle

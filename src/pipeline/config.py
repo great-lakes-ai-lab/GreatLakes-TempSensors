@@ -446,6 +446,11 @@ class PipelineConfig:
     def validate(self):
         from lakes import LAKE_BOUNDS
 
+        if self.environment not in ("local", "hpc"):
+            raise ValueError(
+                f"environment must be 'local' or 'hpc', got {self.environment!r}"
+            )
+
         # PipelineConfig.validate(), after the _normalize_ranges block
         if not self.preprocessing.fit_range:
             self.preprocessing.fit_range = list(self.training.train_range)
@@ -745,6 +750,7 @@ def load_al_config(al_config_path: str) -> PipelineConfig:
 
     # 1. Base config from the trained-model run (full provenance)
     config = load_config(str(base_cfg_path))
+    config.environment = al_raw.get("environment", config.environment)
 
     # 2. Structural signature BEFORE overrides (for the invariant check)
     def _structural_sig(cfg):
