@@ -212,11 +212,11 @@ def train_model(
                   f"No improvement for {tc.patience} epochs.")
             break
 
-        # Free memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
+        # # Free memory
+        # if torch.cuda.is_available():
+        #     torch.cuda.empty_cache()
+        # if torch.backends.mps.is_available():
+        #     torch.mps.empty_cache()
 
 
     elapsed = time.time() - start_time
