@@ -7,6 +7,7 @@ from tqdm.auto import tqdm
 import xarray as xr
 from dataclasses import dataclass, field
 from collections import Counter
+from time import perf_counter
 
 from deepsensor.data import TaskLoader
 from utils.coordinates import generate_random_coordinates
@@ -183,6 +184,15 @@ def gen_tasks(
     skipped = []
     mode_used = Counter()
 
+    timings = {
+        "mask": 0.0,
+        "coordinates": 0.0,
+        "loader": 0.0,
+        "remove_nans": 0.0,
+    }
+    gen_start = perf_counter()
+
+
     for date_i, mode in tqdm(schedule, disable=not progress, desc="Generating tasks"):
         date = dates[date_i]
 
@@ -197,7 +207,11 @@ def gen_tasks(
 
             # Potential sampling mask on a per-date basis, dropping where
             # sst == 0.2 (ice).
-            sst_mask = valid_mask_for_date(bundle['sst_anom_stand'], date)
+            t0 = perf_counter()
+            sst_mask = valid_mask_for_date(bundle["sst_anom_stand"], date)
+            timings["mask"] += perf_counter() - t0
+
+            t0 = perf_counter()
 
             if mode is None:
                 context_points = generate_random_coordinates(
@@ -216,6 +230,8 @@ def gen_tasks(
                     rng=rng
                 )
 
+            timings["coordinates"] += perf_counter() - t0
+
         # Build context_sampling list
         context_sampling = []
         for strategy in tl_config.context_sampling_map:
@@ -226,6 +242,7 @@ def gen_tasks(
             else:
                 context_sampling.append(int(strategy))
 
+        t0 = perf_counter()
         try:
             task = tl_config.task_loader(
                 date,
@@ -235,12 +252,34 @@ def gen_tasks(
         except (KeyError, pd.errors.InvalidIndexError) as e:
             skipped.append((date, str(e)))
             continue
+        finally:
+            timings["loader"] += perf_counter() - t0
 
         task = task.remove_context_nans()
         task = task.remove_target_nans()
+        timings["remove_nans"] += perf_counter() - t0
+
         tasks.append(task)
         if mode is not None:
             mode_used[mode] += 1
+
+    elapsed = perf_counter() - gen_start
+    other = max(0.0, elapsed - sum(timings.values()))
+    n_attempted = len(schedule)
+
+    print(
+        f"\nTask generation timing: "
+        f"{len(tasks)} kept / {n_attempted} attempted, "
+        f"{elapsed:.2f}s total"
+    )
+    for name, seconds in {**timings, "other": other}.items():
+        pct = 100 * seconds / elapsed if elapsed else 0.0
+        ms_per_task = 1000 * seconds / max(n_attempted, 1)
+        print(
+            f"  {name:14s}: {seconds:8.2f}s "
+            f"({pct:5.1f}%) | {ms_per_task:7.2f} ms/attempt"
+        )
+    
 
     if skipped and verbose:
         skipped_dates = pd.to_datetime([d for d, _ in skipped])
