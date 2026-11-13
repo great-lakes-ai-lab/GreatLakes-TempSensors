@@ -77,6 +77,10 @@ def build_task_loader(config: PipelineConfig, bundle: dict) -> TaskLoaderConfig:
         aux_at_targets=aux_at_targets,
     )
 
+    print("\n" + "=" * 60)
+    print("Returning TaskLoaderConfig")
+    print("=" * 60)
+
     return TaskLoaderConfig(
         task_loader=task_loader,
         context_sampling_map=context_sampling_map,

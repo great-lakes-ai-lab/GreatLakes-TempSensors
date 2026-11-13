@@ -114,6 +114,9 @@ def main():
     print("BUILDING TASKS")
     print("=" * 60)
     tl_config = build_task_loader(config, bundle)
+    print(" ")
+    print("         TaskLoaderConfig Returned")
+
 
     if 'model_preview' in stages:
         from pipeline.preview import run_preview
@@ -260,13 +263,13 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 if __name__ == "__main__":
 
     import sys
-    #
-    # sys.argv = [
-    #     "run_greatlakes_deepsensor.py",
-    #     "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-    #     # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
-    #     "--stage", "train",
-    #     # "--stage", "skill_curve",
-    #     "--resume",
-    # ]
+
+    sys.argv = [
+        "run_greatlakes_deepsensor.py",
+        "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+        # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
+        "--stage", "train",
+        # "--stage", "skill_curve",
+        "--resume",
+    ]
     main()
