@@ -6,18 +6,18 @@ run:
 lake: superior
 
 paths:
-  output_root: ~/dev/deepsensor_projects/runs/
+  output_root: /scratch/dannes_root/dannes0/jagraha/ds_runs
 
 data_sources:
   sst:
-    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/glsea_sst.zarr  # GLSEA (1996-2023)
-#    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/glsea3_sst.zarr  # GLSEA3 (2007-current)
+#    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/glsea_sst.zarr  # GLSEA (1996-2023)
+    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/glsea3_sst.zarr  # GLSEA3 (2007-current)
     format: zarr
     role: target
     use_anomalies: true
     sampling: random_lake_points
     variable: sst
-    fill_values: []
+    fill_values: [0.2]
   era5:
     path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/temporal/greatlakes_era5_1995_2025.zarr
     format: zarr
@@ -80,37 +80,60 @@ training:
   #   train -> gradient updates
   #   val   -> checkpoint selection / early stopping
   #   test   > held out; scored once by the `evaluate` stage
-  train_range: [["2018-01-01", "2018-12-31"]] # The range of data exposed to the model for training
-  val_range: [["2015-01-01", "2015-12-31"]] # The range of data exposed for validation
-  test_range: [["2017-01-01", "2017-12-31"]]
+  train_range: [["2025-01-01", "2025-12-31"]] # The range of data exposed to the model for training
+  val_range: [["2024-01-01", "2024-12-31"]] # The range of data exposed for validation
+  test_range: [["2023-01-01", "2023-12-31"]]
+  train_months_drop: [ 12, 1, 2, 3 ]
+  val_months_drop: [ 12, 1, 2, 3 ]
+  test_months_drop: [ 12, 1, 2, 3, 4, 11 ]
 
   # --- Date selection ---
   train_date_mode: random     # "strided" (fixed every-Nth-day set) or "random" (fresh draw each epoch)
   train_date_stride: 20       # mode=strided only: every Nth day; guarantees a min N-day gap between tasks
-  train_date_fraction: 0.02   # mode=random only: fraction of all daily dates in train_range drawn per epoch
+  train_date_fraction: 0.10   # mode=random only: fraction of all daily dates in train_range drawn per epoch
   n_train_dates_per_epoch:   # mode=random only: blank/null -> use fraction; set an int to pin the count
-  val_date_stride: 30         # Stride for validation dates. Always deterministic (same set every epoch)
+  val_date_stride: 21         # Stride for validation dates. Always deterministic (same set every epoch)
+  use_train_monitor: true
+  train_monitor_interval: 3
 
   # --- Context sampling ---
   resample_tasks_per_epoch: true  # Regenerate context points each epoch (Andersson-style). If false, one fixed task set is reused.
   n_context_points: 60  # The number of context points used for a training/validation task. Ignored if vary_n_context is False
   vary_n_context: true  # Whether or not to vary the number of context sampling points for task training/validation
   min_n_context: 5  # If vary_n_context is true, then the lowest possible random number of context points
-  max_n_context: 200  # If vary_n_context is true, then the highest possible random number of context points
+  max_n_context: 50  # If vary_n_context is true, then the highest possible random number of context points
   train_task_seed: 1000  # Per-epoch task seed = train_task_seed + epoch. Change for a different resampling stream.
 
-  # --- Optimization ---
-  n_epochs: 5  # How many epochs the training loop will go for
-  lr: 5.0e-5  # The learning rate. This is the default
-  patience: 15  # Number of training iterations with no improvement before early exit of training
-  internal_density: 50  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+  # --- Task Context Point
+  active_buoy_points_path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/buoy_locations/actual_erie_2025.geojson
+  train_tasks_fully_random: 0.4
+  train_tasks_active_plus_random: 0.25
+  train_tasks_subset_active_plus_random: 0.3
+  train_tasks_active_only: 0.05
+  train_tasks_per_date: 1.2  # Average tasks generated per date (>1.0 lets some dates contribute to multiple sampling modes); only applied when task_ratios is set.
 
+
+  # --- Optimization ---
+  n_epochs: 8  # How many epochs the training loop will go for
+  lr: 1.0e-4  # The learning rate. This is the default=5.0e-5
+  patience: 30  # Number of training iterations with no improvement before early exit of training
+  # --- Model Specification ----
+  internal_density: 150  # The density of the internal grid that all data gets processed into. The higher the value the higer the spatial resolution of the outputs but also increases computational overhead
+  n_unet_layers: 4
+  unet_kernel_size: 5
+  unet_channels: 64  # Not going to mess with the default for now
+  # --- Model Dev Plots. Applies only to preview mode
+  internal_density_sweep: [50, 100, 200, 300, 500]
+  n_unet_layer_sweep: [4, 6]
+  unet_kernel_size_sweeep: [3,5]
 
 evaluation:
-  split: val                 # Held-out split to score on. Use "val" while developing.
-  date_subsample_factor: 60    # Stride over the split range. 7 = weekly.
-  n_context_sweep: [10,  100]  # RMSE is meaningless without stating n_context
-  seeds: [0, 1]            # Random context placements; spread = baseline envelope for AL
+  name: default
+  split: test                # Held-out split to score on. Use "val" while developing.
+  date_subsample_factor: 14    # Stride over the split range. 7 = weekly.
+  n_context_sweep: [10, 20, 40] # [5, 10, 25, 50, 100]  # RMSE is meaningless without stating n_context
+  seeds: [0, 16, 33]            # Random context placements; spread = baseline envelope for AL
+  compare_active: true         # uses training.active_buoy_points_path
 
 
 prediction:

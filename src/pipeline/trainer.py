@@ -188,7 +188,7 @@ def train_model(
             epochs_without_improvement += 1
 
         t_val_total += time.time() - _t0
-        
+
         scheduler.step()
         lr_now = trainer.opt.param_groups[0]["lr"]
         learning_rates.append(lr_now)
