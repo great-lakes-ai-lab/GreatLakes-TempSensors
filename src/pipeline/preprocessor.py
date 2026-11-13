@@ -631,7 +631,18 @@ def load_processed_cache(config: PipelineConfig) -> dict:
     for name in dataset_names:
         path = processed_dir / f"{name}.nc"
         if path.exists():
-            bundle[name] = xr.open_dataset(path)
+            from time import perf_counter
+
+            t0 = perf_counter()
+            with xr.open_dataset(path) as ds:
+                bundle[name] = ds.load()
+
+            print(
+                f"  Loaded {name} into RAM: "
+                f"{bundle[name].nbytes / 1024 ** 3:.2f} GiB "
+                f"in {perf_counter() - t0:.2f}s"
+            )
+            # bundle[name] = xr.open_dataset(path)
 
     # Extract temporal features from mask_time_ds
     if "mask_time_ds" in bundle:
