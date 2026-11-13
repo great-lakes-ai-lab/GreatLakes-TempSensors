@@ -255,6 +255,7 @@ def gen_tasks(
         finally:
             timings["loader"] += perf_counter() - t0
 
+        t0 = perf_counter()
         task = task.remove_context_nans()
         task = task.remove_target_nans()
         timings["remove_nans"] += perf_counter() - t0
@@ -279,7 +280,7 @@ def gen_tasks(
             f"  {name:14s}: {seconds:8.2f}s "
             f"({pct:5.1f}%) | {ms_per_task:7.2f} ms/attempt"
         )
-    
+
 
     if skipped and verbose:
         skipped_dates = pd.to_datetime([d for d, _ in skipped])
