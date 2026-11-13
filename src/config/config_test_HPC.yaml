@@ -3,7 +3,7 @@ run:
   notes: "Checking that the data for the whole temporal exten (glsea3) t goes through before moving to HPC"
   display_plots: save_only  # "auto", "show", or "save_only"
 
-lake: superior
+lake: erie
 
 paths:
   output_root: /scratch/dannes_root/dannes0/jagraha/ds_runs
