@@ -160,6 +160,21 @@ def preprocess_all(config: PipelineConfig, raw_datasets: dict) -> dict:
     # pre_bathy = {'bathy_pre_dp': standardized['bathy'], 'dist_to_land_pre_dp': standardized['dist_to_land']}
     # bundle.update(pre_bathy)
 
+    # Materialize the returned bundle so fresh preprocessing has the
+    # same RAM-resident behavior as loading the processed cache.
+    print("\nLoading preprocessed bundle into RAM...")
+    from time import perf_counter
+
+    for name, obj in bundle.items():
+        if isinstance(obj, (xr.Dataset, xr.DataArray)):
+            t0 = perf_counter()
+            obj.load()
+            print(
+                f"  Materialized {name}: "
+                f"{obj.nbytes / 1024 ** 3:.2f} GiB "
+                f"in {perf_counter() - t0:.2f}s"
+            )
+
     # 9. Save
     _save_cache(config, bundle)
 

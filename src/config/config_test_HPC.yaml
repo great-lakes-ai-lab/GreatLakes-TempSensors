@@ -3,6 +3,7 @@ run:
   notes: "Checking that the data for the whole temporal exten (glsea3) t goes through before moving to HPC"
   display_plots: save_only  # "auto", "show", or "save_only"
 
+environment: hpc
 lake: erie
 
 paths:
@@ -55,7 +56,7 @@ data_sources:
     coarsen_factor: 10
     fill_values: []
   core_depth:
-    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/
+    path: /nfs/turbo/seas-dannes/SST-sensor-placement-input/pipeline_inputs/bathymetry/gl_core_depth_3arcsec.nc
     format: netcdf
     variable: core_depth
     role: [context, aux_at_targets]
