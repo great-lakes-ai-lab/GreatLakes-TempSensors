@@ -333,6 +333,8 @@ class ActiveLearningConfig:
     exclusion_points_path_search: str = None
     min_shore_dist_search: float = 0.0
     min_depth_search: float = 0.0
+    exclusion_polygon_path_search: str = None
+    exclusion_poly_mode_search: str = "exclude"
 
     # Target Surface constraints
     min_dist_from_existing_km_target: float = 0.0
@@ -340,10 +342,21 @@ class ActiveLearningConfig:
     exclusion_points_path_target: str = None
     min_shore_dist_target: float = 0.0
     min_depth_target: float = 0.0
+    exclusion_polygon_path_target: str = None
+    exclusion_poly_mode_target: str = "exclude"
 
     # Outputs
     save_acquisition_surface: bool = True
     plot_results: bool = True
+
+    # Runtime preview
+    preview: bool = False
+    preview_max_tasks: int = 10
+    preview_n_new_sensors: int = 2
+    preview_max_candidates_sequential: int = 20
+    preview_seed: int = 42
+    preview_safety_factor: float = 1.5
+    preview_overhead_minutes: float = 60.0
 
 
 @dataclass

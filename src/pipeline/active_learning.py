@@ -4,9 +4,12 @@
 from pathlib import Path
 from typing import Union
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
+import geopandas as gpd
+import shapely
 import xarray as xr
 from deepsensor.active_learning import AcquisitionFunction, AcquisitionFunctionParallel
 
@@ -25,7 +28,10 @@ def run_active_learning(config, bundle, tl_config):
     al_cfg = config.active_learning
 
     # Resolve output directory using AL experiment name
-    output_dir = config.paths.resolve_active_learning(al_cfg.name)
+    output_dir = Path(config.paths.resolve_active_learning(al_cfg.name))
+    if al_cfg.preview:
+        output_dir = output_dir / "preview"
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save the active learning config for this experiment
@@ -44,8 +50,9 @@ def run_active_learning(config, bundle, tl_config):
     fixed_context_points = resolve_context_points(config, bundle)
 
     # Save context points if random (for reproducibility/visualization)
-    if al_cfg.save_context_points:
-        save_context_points(fixed_context_points, bundle, config, output_dir)
+    if not al_cfg.preview:
+        if al_cfg.save_context_points:
+            save_context_points(fixed_context_points, bundle, config, output_dir)
 
     # 3. Build active learning dates
     al_dates = make_active_learning_dates(config)
@@ -107,38 +114,142 @@ def run_active_learning(config, bundle, tl_config):
     print(f"  Target grid shape: {target_grid.shape}")
 
     # Save the search mask to get used in skill_curve.py
-    search_mask_path = output_dir / "search_mask.nc"
-    search_mask.to_netcdf(search_mask_path)
+    if not al_cfg.preview:
+        search_mask_path = output_dir / "search_mask.nc"
+        search_mask.to_netcdf(search_mask_path)
 
-    target_mask_path = output_dir / "target_mask.nc"
-    target_mask.to_netcdf(target_mask_path)
+        target_mask_path = output_dir / "target_mask.nc"
+        target_mask.to_netcdf(target_mask_path)
 
-    target_mask_norm_path = output_dir / "target_mask_norm.nc"
-    target_mask_norm.to_netcdf(target_mask_norm_path)
+        target_mask_norm_path = output_dir / "target_mask_norm.nc"
+        target_mask_norm.to_netcdf(target_mask_norm_path)
 
-    # TDOD: Save out a version of target mask that is regridded to the target variable size (eg. bundle['sst_anom']) then put through the
-    #   data processor to be in normalized data coords. Then it can get picked up in compute weighted scores via skill curve to mask only
-    #   to the areas identified in the target mask (Optional)
+    #############################################
+    ## ------------- Setting up the preview part
+    ##############################################
+    # Preserve production workload counts before preparing preview inputs.
+    is_parallel = isinstance(acquisition_fn, AcquisitionFunctionParallel)
 
-    n_valid_candidates = int(search_mask.sum())
-    print(f"Search grid: {n_valid_candidates} cells to be evaluated")
-    if isinstance(acquisition_fn, AcquisitionFunctionParallel):
-        print(f"Will compute {al_cfg.n_new_sensors * len(al_dates)} tasks")
-    else:
-        print(f"Will compute {al_cfg.n_new_sensors * len(al_dates) * n_valid_candidates} tasks")
-    assert al_cfg.n_new_sensors < n_valid_candidates, (
-        f"n_new_sensors ({al_cfg.n_new_sensors}) >= valid masked candidates "
-        f"({n_valid_candidates}). Reduce n_new_sensors or use a finer search grid."
+    n_tasks_full = len(tasks)
+    n_sensors_full = al_cfg.n_new_sensors
+    n_candidates_full = int(search_mask.sum().item())
+
+    if not 0 < n_sensors_full < n_candidates_full:
+        raise ValueError(
+            f"n_new_sensors ({n_sensors_full}) must be greater than zero "
+            f"and less than valid masked candidates ({n_candidates_full})."
+        )
+
+    n_acquisition_calls_full = n_sensors_full * n_tasks_full
+    if not is_parallel:
+        n_acquisition_calls_full *= n_candidates_full
+
+    n_baseline_calls_full = (
+        n_sensors_full * n_tasks_full
+        if effective_diff and not is_parallel
+        else 0
     )
+
+    print("\nFull active-learning workload:")
+    print(f"  Evaluation tasks: {n_tasks_full}")
+    print(f"  New sensors: {n_sensors_full}")
+    print(f"  Valid search candidates: {n_candidates_full}")
+    print(f"  Acquisition calls: {n_acquisition_calls_full:,}")
+    if n_baseline_calls_full:
+        print(f"  Additional baseline calls: {n_baseline_calls_full:,}")
+
+    # Default: use the complete production inputs.
+    tasks_run = tasks
+    search_mask_run = search_mask
+    n_sensors_run = n_sensors_full
+
+    if al_cfg.preview:
+        # Evenly spaced tasks cover the evaluation period, assuming date order.
+        n_tasks_run = min(al_cfg.preview_max_tasks, n_tasks_full)
+        task_indices = np.linspace(
+            0,
+            n_tasks_full - 1,
+            num=n_tasks_run,
+            dtype=int,
+        )
+        tasks_run = [tasks[int(i)] for i in task_indices]
+
+        n_sensors_run = min(
+            al_cfg.preview_n_new_sensors,
+            n_sensors_full,
+        )
+
+        if not is_parallel:
+            # Retain a reproducible subset of currently valid search candidates.
+            # Do not change the search grid or target grid/mask.
+            mask_values = np.asarray(search_mask.values, dtype=bool)
+            valid_indices = np.flatnonzero(mask_values.ravel())
+
+            n_candidates_run = min(
+                al_cfg.preview_max_candidates_sequential,
+                n_candidates_full,
+            )
+
+            if n_candidates_run <= n_sensors_run:
+                raise ValueError(
+                    f"Preview has {n_candidates_run} search candidates but "
+                    f"requests {n_sensors_run} sensors. Increase "
+                    f"preview_max_candidates_sequential or reduce "
+                    f"preview_n_new_sensors so candidates > sensors."
+                )
+
+            rng = np.random.default_rng(al_cfg.preview_seed)
+            selected_indices = rng.choice(
+                valid_indices,
+                size=n_candidates_run,
+                replace=False,
+            )
+
+            preview_values = np.zeros(mask_values.size, dtype=bool)
+            preview_values[selected_indices] = True
+
+            search_mask_run = search_mask.copy(
+                data=preview_values.reshape(mask_values.shape)
+            )
+
+    n_tasks_run = len(tasks_run)
+    n_candidates_run = int(search_mask_run.sum().item())
+
+    n_acquisition_calls_run = n_sensors_run * n_tasks_run
+    if not is_parallel:
+        n_acquisition_calls_run *= n_candidates_run
+
+    n_baseline_calls_run = (
+        n_sensors_run * n_tasks_run
+        if effective_diff and not is_parallel
+        else 0
+    )
+
+    if al_cfg.preview:
+        print("\nRuntime-preview workload:")
+        print(f"  Evaluation tasks: {n_tasks_run} / {n_tasks_full}")
+        print(f"  New sensors: {n_sensors_run} / {n_sensors_full}")
+        print(
+            f"  Valid search candidates: "
+            f"{n_candidates_run} / {n_candidates_full}"
+        )
+        print(f"  Acquisition calls: {n_acquisition_calls_run:,}")
+        if n_baseline_calls_run:
+            print(f"  Additional baseline calls: {n_baseline_calls_run:,}")
+
+        if is_parallel:
+            print("  Spatial grids and masks retained at production size.")
+        else:
+            print("  Only the search mask was reduced; target inputs unchanged.")
 
     # 8. Run GreedyAlgorithm
     greedy = GreedyAlgorithm(
         model=model,
         X_s=search_grid,
         X_t=target_grid,
-        X_s_mask=search_mask,
+        X_s_mask=search_mask_run,
         X_t_mask=target_mask,
-        N_new_context=al_cfg.n_new_sensors,
+        N_new_context=n_sensors_run,
         X_normalised=False,
         model_infill_method=al_cfg.model_infill_method,
         context_set_idx=al_cfg.context_set_idx,
@@ -148,20 +259,150 @@ def run_active_learning(config, bundle, tl_config):
         verbose=True,
     )
 
+    if al_cfg.preview:
+        import time
+
+        _synchronize_gpu()
+        greedy_start = time.perf_counter()
+
     X_new_df, acquisition_fn_ds = greedy(
         acquisition_fn,
-        tasks,
+        tasks_run,
         diff=effective_diff,
     )
 
-    # 9. Post-processing: enforce minimum distance. DISCOURAGED FROM USING THIS. IT BREAKS THE SEQUENTIAL
-    # SLATED TO MOVE OUT. N
-    # if al_cfg.min_dist_from_existing_km > 0:
-    #     X_new_df = enforce_min_distance(
-    #         X_new_df,
-    #         min_dist_km=al_cfg.min_dist_from_existing_km,
-    #         model=model,
-    #     )
+    if al_cfg.preview:
+        import json
+
+        _synchronize_gpu()
+        preview_seconds = time.perf_counter() - greedy_start
+
+        task_scale = n_tasks_full / n_tasks_run
+        sensor_scale = n_sensors_full / n_sensors_run
+        candidate_scale = (
+            1.0 if is_parallel
+            else n_candidates_full / n_candidates_run
+        )
+
+        workload_scale = task_scale * sensor_scale * candidate_scale
+        estimated_greedy_seconds = preview_seconds * workload_scale
+
+        overhead_seconds = al_cfg.preview_overhead_minutes * 60
+        suggested_seconds = (
+                estimated_greedy_seconds * al_cfg.preview_safety_factor
+                + overhead_seconds
+        )
+        slurm_time = _format_slurm_time(suggested_seconds)
+
+        # This is an average work-unit duration, not a measurement of each
+        # individual acquisition call. It includes greedy initialization.
+        n_calls_run = (
+                n_acquisition_calls_run + n_baseline_calls_run
+        )
+        average_seconds_per_call_equivalent = (
+                preview_seconds / n_calls_run
+        )
+
+        estimate_notes = [
+            "The entire greedy call was timed, including initialization "
+            "and model infill.",
+            "Runtime is extrapolated linearly across tasks and sensor iterations.",
+            "Later iterations and differences between sampled tasks can "
+            "change runtime.",
+            "The overhead allowance covers work outside the timed greedy call.",
+        ]
+        if not is_parallel:
+            estimate_notes.append(
+                "For sequential acquisition functions, the candidate ratio "
+                "also scales initialization and any baseline calls. This can "
+                "overestimate those components."
+            )
+
+        report = {
+            "experiment_name": al_cfg.name,
+            "acquisition_function": al_cfg.acquisition_function,
+            "acquisition_type": (
+                "parallel" if is_parallel else "sequential"
+            ),
+            "effective_diff": bool(effective_diff),
+            "full_workload": {
+                "n_tasks": n_tasks_full,
+                "n_new_sensors": n_sensors_full,
+                "n_candidates": n_candidates_full,
+                "search_grid_shape": list(search_grid.shape),
+                "target_grid_shape": list(target_grid.shape),
+                "n_valid_target_points": int(target_mask.sum().item()),
+                "n_acquisition_calls": n_acquisition_calls_full,
+                "n_baseline_calls": n_baseline_calls_full,
+            },
+            "preview_workload": {
+                "n_tasks": n_tasks_run,
+                "n_new_sensors": n_sensors_run,
+                "n_candidates": n_candidates_run,
+                "n_acquisition_calls": n_acquisition_calls_run,
+                "n_baseline_calls": n_baseline_calls_run,
+                "task_dates": [str(task["time"]) for task in tasks_run],
+                "candidate_selection_seed": al_cfg.preview_seed,
+            },
+            "timing": {
+                "measured_preview_greedy_seconds": preview_seconds,
+                "average_seconds_per_call_equivalent": (
+                    average_seconds_per_call_equivalent
+                ),
+                "task_scale": task_scale,
+                "sensor_scale": sensor_scale,
+                "candidate_scale": candidate_scale,
+                "total_workload_scale": workload_scale,
+                "estimated_full_greedy_seconds": estimated_greedy_seconds,
+                "safety_factor": al_cfg.preview_safety_factor,
+                "overhead_minutes": al_cfg.preview_overhead_minutes,
+                "suggested_walltime_seconds": suggested_seconds,
+                "suggested_slurm_time": slurm_time,
+            },
+            "estimate_notes": estimate_notes,
+        }
+
+        report_path = output_dir / "runtime_preview.json"
+        with open(report_path, "w") as f:
+            json.dump(report, f, indent=4)
+
+        print("\n=== Active Learning Runtime Estimate ===")
+        print(
+            f"Measured preview greedy call: "
+            f"{_format_duration(preview_seconds)}"
+        )
+        print(f"Workload scaling factor: {workload_scale:,.2f}")
+        print(
+            f"Estimated full greedy runtime: "
+            f"{_format_duration(estimated_greedy_seconds)}"
+        )
+        print(f"Safety factor: {al_cfg.preview_safety_factor}")
+        print(
+            f"Additional overhead: "
+            f"{al_cfg.preview_overhead_minutes:g} minutes"
+        )
+        print(
+            f"Suggested wall time: "
+            f"{_format_duration(suggested_seconds)}"
+        )
+        print(f"Suggested sbatch option: --time={slurm_time}")
+        print(f"Runtime report saved: {report_path}")
+
+        print("\nEstimate assumptions:")
+        for note in estimate_notes:
+            print(f"  - {note}")
+
+        print(
+            "\nPreview complete. Production recommendations, "
+            "acquisition surfaces, and plots skipped."
+        )
+
+        return {
+            "preview": True,
+            "runtime_report": report,
+            "runtime_report_path": report_path,
+        }
+
 
     # 10. Save outputs
     save_recommended_locations(X_new_df, model, output_dir, config)
@@ -208,6 +449,7 @@ def run_active_learning(config, bundle, tl_config):
         "recommended_locations": X_new_df,
         "acquisition_surfaces": acquisition_fn_ds,
     }
+
 
 def _save_al_config(config, output_dir: Path):
     """
@@ -266,6 +508,15 @@ def _save_al_config(config, output_dir: Path):
         "run_name": config.run.name,
         "lake": config.lake,
         "model_dir": config.paths.model_dir,
+        "preview": al_cfg.preview,
+        "preview_max_tasks": al_cfg.preview_max_tasks,
+        "preview_n_new_sensors": al_cfg.preview_n_new_sensors,
+        "preview_max_candidates_sequential": (
+            al_cfg.preview_max_candidates_sequential
+        ),
+        "preview_seed": al_cfg.preview_seed,
+        "preview_safety_factor": al_cfg.preview_safety_factor,
+        "preview_overhead_minutes": al_cfg.preview_overhead_minutes,
     }
 
     config_path = output_dir / "al_config.json"
@@ -606,23 +857,6 @@ def _generate_random_context(al_cfg, bundle) -> np.ndarray:
 
     return points
 
-
-# def _load_geojson_context(al_cfg, bundle) -> np.ndarray:
-#     """
-#     Load context points from a GeoJSON file and normalize to model coordinates.
-#
-#     Expects Point features in WGS84.
-#     """
-#     lats, lons = load_points_from_geojson(al_cfg.context_geojson_path)
-#
-#     # Stack as (2, N) in raw coordinates [lat, lon]
-#     raw_points = np.array([lats, lons])
-#
-#     # Normalize to model coordinate space
-#     data_processor = bundle["data_processor"]
-#     normalized_points = data_processor.map_coord_array(raw_points, unnorm=False)
-#
-#     return normalized_points
 
 def _load_geojson_context(al_cfg, bundle) -> np.ndarray:
     """Backwards-compatible wrapper: pulls the path off an active-learning config."""
@@ -1089,21 +1323,49 @@ def build_grids_and_masks(bundle, config, acq_fn):
                                    min_dist_km=al_cfg.min_dist_from_exclusion_km_target,
                                    points_2=fixed_context_points, min_dist_km_2=al_cfg.min_dist_from_existing_km_target)
 
+    search_poly_mode = al_cfg.exclusion_poly_mode_search or "exclude"
+    target_poly_mode = al_cfg.exclusion_poly_mode_target or "exclude"
+
+    search_polygons = load_polygons_from_file(al_cfg.exclusion_polygon_path_search)
+    # Reuse the loaded geometry if search and target point to the same file
+    if (al_cfg.exclusion_polygon_path_target is not None
+            and al_cfg.exclusion_polygon_path_target == al_cfg.exclusion_polygon_path_search):
+        target_polygons = search_polygons
+    else:
+        target_polygons = load_polygons_from_file(al_cfg.exclusion_polygon_path_target)
+
+    search_mask = mask_by_polygons(search_mask, search_polygons,
+                                   mode=search_poly_mode, label="search polygons")
+    target_mask = mask_by_polygons(target_mask, target_polygons,
+                                   mode=target_poly_mode, label="target polygons")
+
+    report_points_in_polygons(fixed_context_points, search_polygons,
+                              mode=search_poly_mode, label="search polygons")
+    # -----------------------------
+
     points = {
         "search_exclusion_points": search_exclusion_points,
         "target_exclusion_points": target_exclusion_points,
         "fixed_context_points_latlon": fixed_context_points,
+        "search_polygons": search_polygons,  # handy for plotting
+        "target_polygons": target_polygons,
     }
+
 
     is_parallel = isinstance(acq_fn, AcquisitionFunctionParallel)
 
-    target_mask_norm = bundle['data_processor'].map_coords(target_mask, unnorm=False)
-
     if is_parallel:
+        if target_polygons is not None:
+            warnings.warn(
+                "Parallel acquisition function uses search_mask for both X_s and X_t; "
+                "target polygons (exclusion_polygon_path_target) will not affect "
+                "the target mask used for acquisition.",
+                UserWarning,
+                stacklevel=2,
+            )
         candidate = al_cfg.candidate_coarsen_factor or 1
         target = al_cfg.target_coarsen_factor or 1
         if target != candidate:
-            import warnings
             warnings.warn(
                 f"Parallel acquisition function requires X_s == X_t. "
                 f"Ignoring target_coarsen_factor={target}; using "
@@ -1117,6 +1379,7 @@ def build_grids_and_masks(bundle, config, acq_fn):
             search_mask = coarsen_mask(search_mask, coarsen)
             # target_mask = coarsen_mask(target_mask, coarsen)
 
+        target_mask_norm = bundle['data_processor'].map_coords(search_mask, unnorm=False)
         return {
             "search_grid": base_grid, "search_mask": search_mask,
             "target_grid": base_grid, "target_mask": search_mask,
@@ -1142,6 +1405,8 @@ def build_grids_and_masks(bundle, config, acq_fn):
             search_grid = base_grid
             search_mask = search_mask
 
+        target_mask_norm = bundle['data_processor'].map_coords(target_mask, unnorm=False)
+
         return {
             "search_grid": search_grid,
             "search_mask": search_mask,
@@ -1152,6 +1417,193 @@ def build_grids_and_masks(bundle, config, acq_fn):
         }
 
 
+_POLYGONAL_TYPES = ("Polygon", "MultiPolygon")
+_VALID_POLY_MODES = ("include", "exclude")
+
+
+def _extract_polygonal(geom, source: str):
+    """Return only the Polygon/MultiPolygon parts of a geometry.
+
+    ``make_valid`` can return a GeometryCollection that contains stray
+    LineStrings or Points, so those are stripped here.
+    """
+    if geom.geom_type in _POLYGONAL_TYPES:
+        return geom
+
+    parts = [p for p in shapely.get_parts(geom) if p.geom_type in _POLYGONAL_TYPES]
+    if not parts:
+        raise ValueError(f"No polygonal geometry remained after repair in {source}")
+    return shapely.union_all(parts)
+
+
+def load_polygons_from_file(path):
+    """
+    Load polygons from a GeoJSON (or any GeoPandas-readable vector file).
+
+    All polygons are reprojected to EPSG:4326, validated, merged into a
+    single (Multi)Polygon, and prepared for fast vectorized containment tests.
+
+    Parameters
+    ----------
+    path : str | Path | None
+        Path to the polygon file.
+
+    Returns
+    -------
+    shapely.Polygon | shapely.MultiPolygon | None
+        Merged polygon geometry, or None if path is None.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the path does not exist.
+    ValueError
+        If the file is empty or contains non-polygon geometries.
+    """
+    if path is None:
+        return None
+
+    path = Path(path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Polygon file not found: {path}")
+
+    gdf = gpd.read_file(path)
+
+    # Drop null / empty geometries
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+    if gdf.empty:
+        raise ValueError(f"No non-empty geometries found in {path}")
+
+    # Enforce polygon-only input
+    bad = ~gdf.geom_type.isin(_POLYGONAL_TYPES)
+    if bad.any():
+        bad_types = sorted(gdf.loc[bad].geom_type.unique())
+        raise ValueError(
+            f"{path.name} contains non-polygon geometries {bad_types} "
+            f"({int(bad.sum())} of {len(gdf)} features). Only Polygon and "
+            f"MultiPolygon are supported for polygon masking."
+        )
+
+    # CRS handling: GeoJSON is WGS84 by spec, but be defensive
+    if gdf.crs is None:
+        print(f"  {path.name} has no CRS; assuming EPSG:4326")
+        gdf = gdf.set_crs(epsg=4326)
+    elif gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    # Repair invalid geometries (self-intersections, etc.)
+    invalid = ~gdf.is_valid
+    if invalid.any():
+        print(f"  Repairing {int(invalid.sum())} invalid polygon(s) in {path.name}")
+        gdf.loc[invalid, "geometry"] = gdf.loc[invalid, "geometry"].make_valid()
+
+    # Merge into one geometry so each grid needs only one containment test
+    geom = _extract_polygonal(gdf.geometry.union_all(), source=path.name)
+    shapely.prepare(geom)
+
+    minx, miny, maxx, maxy = geom.bounds
+    print(
+        f"  Loaded {len(gdf)} polygon feature(s) from {path.name} "
+        f"(lon [{minx:.3f}, {maxx:.3f}], lat [{miny:.3f}, {maxy:.3f}])"
+    )
+    return geom
+
+
+def mask_by_polygons(
+    mask: xr.DataArray,
+    polygons,
+    mode: str = "exclude",
+    label: str = "polygons",
+) -> xr.DataArray:
+    """
+    Update a boolean mask using polygon containment of grid-cell centers.
+
+    Parameters
+    ----------
+    mask : xr.DataArray
+        Boolean 2D mask where True means the location is allowed.
+    polygons : shapely.Polygon | shapely.MultiPolygon | None
+        Geometry from ``load_polygons_from_file``. If None, the mask is
+        returned unchanged.
+    mode : {"exclude", "include"}
+        "exclude": cells whose centers fall inside the polygons become False.
+        "include": cells whose centers fall outside the polygons become False.
+    label : str
+        Descriptive name used in log output.
+
+    Returns
+    -------
+    xr.DataArray
+        A copy of ``mask`` with the polygon constraint applied.
+    """
+    if polygons is None:
+        return mask
+
+    if mode not in _VALID_POLY_MODES:
+        raise ValueError(
+            f"Invalid polygon mode '{mode}' for {label}. "
+            f"Expected one of {_VALID_POLY_MODES}."
+        )
+
+    lat_name, lon_name = find_lat_lon_names(mask)
+    lon_2d, lat_2d = np.meshgrid(mask[lon_name].values, mask[lat_name].values)
+
+    # Vectorized cell-center test (boundary points are NOT counted as inside)
+    inside = shapely.contains_xy(polygons, lon_2d, lat_2d)
+
+    updated = mask.values.astype(bool, copy=True)
+    if mode == "exclude":
+        updated &= ~inside
+    else:
+        updated &= inside
+
+    result = mask.copy(data=updated)
+
+    n_before = int(mask.sum().item())
+    n_after = int(result.sum().item())
+    print(
+        f"  Polygon mask ({label}, mode={mode}): {n_before} -> {n_after} valid "
+        f"cells ({n_before - n_after} removed; {int(inside.sum())} grid cells "
+        f"inside polygons)"
+    )
+
+    if n_after == 0:
+        if mode == "include":
+            hint = (
+                "Check that the inclusion polygons overlap the grid domain and "
+                "the regions left valid by the bathymetry/distance/point masks."
+            )
+        else:
+            hint = "The exclusion polygons may cover the entire valid region."
+        raise ValueError(f"All locations were masked out by {label}! {hint}")
+
+    return result
+
+
+def report_points_in_polygons(points, polygons, mode: str, label: str = "polygons"):
+    """
+    Print a notice if fixed context points conflict with a polygon constraint.
+
+    In "exclude" mode, this flags points inside the polygons. In "include"
+    mode, it flags points outside them. It is informational only.
+    """
+    if not points or polygons is None:
+        return
+
+    lats, lons = map(np.asarray, zip(*points))
+    inside = shapely.contains_xy(polygons, lons, lats)
+
+    if mode == "exclude":
+        flagged, where = inside, "inside exclusion"
+    else:
+        flagged, where = ~inside, "outside inclusion"
+
+    n_flagged = int(flagged.sum())
+    if n_flagged:
+        print(
+            f"  Note: {n_flagged} of {len(points)} fixed context point(s) "
+            f"lie {where} polygons ({label})."
+        )
 # ---------------------------------------------------------------------
 # Distance masking
 # ---------------------------------------------------------------------
@@ -1975,3 +2427,34 @@ def plot_active_learning_results(
     _save_fig(config, fig, plots_dir / "recommended_sensor_locations.png")
 
     print(f"Active learning plots saved to: {plots_dir}")
+
+
+# ---------------------------------------------------------------------
+# Preview
+# ---------------------------------------------------------------------
+
+def _synchronize_gpu():
+    """Wait for pending PyTorch CUDA work, if CUDA has been initialized."""
+    try:
+        import torch
+    except ImportError:
+        return
+
+    if torch.cuda.is_available() and torch.cuda.is_initialized():
+        torch.cuda.synchronize()
+
+
+def _format_duration(seconds):
+    """Format a duration for human-readable output."""
+    seconds = math.ceil(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes:02d}m {seconds:02d}s"
+
+
+def _format_slurm_time(seconds):
+    """Format a duration as Slurm D-HH:MM:SS, rounded up to a minute."""
+    total_minutes = math.ceil(seconds / 60)
+    days, remainder = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(remainder, 60)
+    return f"{days}-{hours:02d}:{minutes:02d}:00"

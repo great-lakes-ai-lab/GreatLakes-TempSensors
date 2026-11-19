@@ -79,7 +79,7 @@ def save_trained_model(model: ConvNP, config: PipelineConfig):
             shutil.rmtree(dp_dest)
         shutil.copytree(str(dp_source), str(dp_dest))
 
-    print(f"Model saved to: {model_dir}")
+    # print(f"Model saved to: {model_dir}")
 
 
 def load_trained_model(config: PipelineConfig, bundle: dict, task_loader) -> ConvNP:

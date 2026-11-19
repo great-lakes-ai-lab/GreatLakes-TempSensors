@@ -87,6 +87,14 @@ active_learning:
   save_acquisition_surface: true
   plot_results: true
 
+  # Preview
+  preview: true
+  preview_max_tasks: 10
+  preview_n_new_sensors: 2
+  preview_max_candidates_sequential: 20
+  preview_seed: 42
+  preview_safety_factor: 1.5
+  preview_overhead_minutes: 60
 
   # diff: For SEQUENTIAL acquisition functions only, report the *change* in the
   #   acquisition metric caused by adding a candidate sensor, i.e.

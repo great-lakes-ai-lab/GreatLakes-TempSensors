@@ -266,10 +266,10 @@ if __name__ == "__main__":
     #
     # sys.argv = [
     #     "run_greatlakes_deepsensor.py",
-    #     "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
-    #     # "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
-    #     "--stage", "train",
-    #     # "--stage", "skill_curve",
-    #     "--resume",
+    #     # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
+    #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
+    #     # "--stage", "train",
+    #     "--stage", "active_learning",
+    #     # "--resume",
     # ]
     main()

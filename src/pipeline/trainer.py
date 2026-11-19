@@ -139,7 +139,6 @@ def train_model(
 
         # Train
         _t0 = time.time()
-        print('--------- in Trainer ----------')
         batch_losses = trainer(train_tasks)
         t_train_total += time.time() - _t0
         epoch_loss = float(np.mean(batch_losses))

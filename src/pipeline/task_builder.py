@@ -272,18 +272,19 @@ def gen_tasks(
     other = max(0.0, elapsed - sum(timings.values()))
     n_attempted = len(schedule)
 
-    print(
-        f"\nTask generation timing: "
-        f"{len(tasks)} kept / {n_attempted} attempted, "
-        f"{elapsed:.2f}s total"
-    )
-    for name, seconds in {**timings, "other": other}.items():
-        pct = 100 * seconds / elapsed if elapsed else 0.0
-        ms_per_task = 1000 * seconds / max(n_attempted, 1)
+    if verbose:
         print(
-            f"  {name:14s}: {seconds:8.2f}s "
-            f"({pct:5.1f}%) | {ms_per_task:7.2f} ms/attempt"
+            f"\nTask generation timing: "
+            f"{len(tasks)} kept / {n_attempted} attempted, "
+            f"{elapsed:.2f}s total"
         )
+        for name, seconds in {**timings, "other": other}.items():
+            pct = 100 * seconds / elapsed if elapsed else 0.0
+            ms_per_task = 1000 * seconds / max(n_attempted, 1)
+            print(
+                f"  {name:14s}: {seconds:8.2f}s "
+                f"({pct:5.1f}%) | {ms_per_task:7.2f} ms/attempt"
+            )
 
 
     if skipped and verbose:
@@ -300,119 +301,6 @@ def gen_tasks(
               + ", ".join(f"{m}={mode_used[m]}" for m in TASK_MODES if mode_counts[m]))
 
     return tasks
-
-# def gen_tasks(
-#     tl_config,
-#     dates,
-#     bundle: dict,
-#     config,
-#     n_context: int = None,
-#     vary_n_context: bool = None,
-#     min_n: int = None,
-#     max_n: int = None,
-#     seed: int = None,
-#     fixed_context_points: np.ndarray = None,
-#     progress: bool = True,
-#     verbose: bool = True
-# ) -> list:
-#     """
-#     Generate tasks for a list of dates.
-#
-#     Parameters
-#     ----------
-#     tl_config : TaskLoaderConfig
-#     dates : array-like of datetime
-#     bundle : dict
-#         Processed bundle (needs 'lakemask_sampling' and 'data_processor')
-#     config : PipelineConfig
-#     n_context : int, optional
-#     vary_n_context : bool, optional
-#     min_n, max_n : int, optional
-#     seed : int | np.random.Generator |optional
-#     fixed_context_points : np.ndarray, optional
-#         Array of shape (2, N) with normalized [lat, lon] coordinates.
-#         If provided, these exact points are used as context for every task.
-#         Overrides random generation and vary_n_context.
-#     progress : bool
-#
-#     Returns
-#     -------
-#     list of Task objects
-#     """
-#
-#     tc = config.training
-#     n_context = n_context if n_context is not None else tc.n_context_points
-#     vary_n_context = vary_n_context if vary_n_context is not None else tc.vary_n_context
-#     min_n = min_n if min_n is not None else tc.min_n_context
-#     max_n = max_n if max_n is not None else tc.max_n_context
-#
-#     rng = np.random.default_rng(seed)
-#
-#     if verbose:
-#         seed_label = seed if isinstance(seed, (int, np.integer)) else "derived"
-#         print(f"\nNow generating {len(dates)} tasks "
-#               f"(varying N context points={vary_n_context}, seed={seed_label})...")
-#
-#     tasks = []
-#     skipped = []
-#
-#     for date in tqdm(dates, disable=not progress, desc="Generating tasks"):
-#         # Determine context points for this task
-#         if fixed_context_points is not None:
-#             context_points = fixed_context_points
-#         else:
-#             if vary_n_context:
-#                 N = int(rng.integers(min_n, max_n))
-#             else:
-#                 N = n_context
-#
-#
-#             # Now implemented to create the potential sampling mask on a per date basis dropping where sst==0.2(ice)
-#             sst_mask = valid_mask_for_date(bundle['sst_anom_stand'], date)
-#
-#             context_points = generate_random_coordinates(
-#                 # bundle["lakemask_sampling"],
-#                 sst_mask,
-#                 N=N,
-#                 data_processor=bundle["data_processor"],
-#                 rng=rng
-#             )
-#
-#         # Build context_sampling list
-#         context_sampling = []
-#         for strategy in tl_config.context_sampling_map:
-#             if strategy == "random_lake_points":
-#                 context_sampling.append(context_points)
-#             elif strategy == "all":
-#                 context_sampling.append("all")
-#             else:
-#                 context_sampling.append(int(strategy))
-#
-#         try:
-#             task = tl_config.task_loader(
-#                 date,
-#                 context_sampling=context_sampling,
-#                 target_sampling="all",
-#             )
-#         except (KeyError, pd.errors.InvalidIndexError) as e:
-#             skipped.append((date, str(e)))
-#             continue
-#
-#         task = task.remove_context_nans()
-#         task = task.remove_target_nans()
-#         tasks.append(task)
-#
-#     if skipped and verbose:
-#         skipped_dates = pd.to_datetime([d for d, _ in skipped])
-#         print(f"Skipped {len(skipped)} dates due to errors.")
-#         print(f"    Skip date range: {skipped_dates.min().date()} to {skipped_dates.max().date()}")
-#         # Optional: show first few
-#         for d, msg in skipped[:5]:
-#             print(f"    {d}: {msg}")
-#         if len(skipped) > 5:
-#             print(f"    ... and {len(skipped) - 5} more")
-#
-#     return tasks
 
 
 def make_train_val_dates(config: PipelineConfig) -> tuple:
