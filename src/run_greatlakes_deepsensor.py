@@ -261,7 +261,7 @@ def run_preprocessing(config: PipelineConfig) -> dict:
 
 
 if __name__ == "__main__":
-    #
+
     # import sys
     #
     # sys.argv = [
@@ -269,7 +269,7 @@ if __name__ == "__main__":
     #     # "--config", "/Users/jagraha/dev/repos/GreatLakes-TempSensors/src/config/config_debug_local.yaml",
     #     "--config", "/Users/jagraha/dev/deepsensor_projects/runs/Nov3_Erie_Dense/al_config.yaml",
     #     # "--stage", "train",
-    #     "--stage", "active_learning",
+    #     "--stage", "skill_curve",
     #     # "--resume",
     # ]
     main()

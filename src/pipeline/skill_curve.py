@@ -414,7 +414,7 @@ def _load_experiment(exp_dir: Path, name: str) -> dict:
         "recommendations_path": rec_path,
         "recommendations": rec_df,
         "acquisition_function": al_cfg.get("acquisition_function", "unknown"),
-        "n_context_baseline": int(al_cfg.get("n_context", 0)),
+        "n_context_baseline": int(al_cfg.get("n_context") or 0),
     }
 
 
@@ -534,6 +534,10 @@ def _score_prefix_sweep(
             SkillMapAccumulator(map_template)
             if (k in map_ks and map_template is not None) else None
         )
+
+        #### Debuggign the HPC skill curve
+        print(" ---------------- First TASK")
+        print(tasks[0])
 
         scores = compute_weighted_scores(
             model, tasks, bundle, tl_config.task_loader,
