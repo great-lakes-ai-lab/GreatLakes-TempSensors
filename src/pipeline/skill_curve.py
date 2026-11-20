@@ -535,10 +535,6 @@ def _score_prefix_sweep(
             if (k in map_ks and map_template is not None) else None
         )
 
-        #### Debuggign the HPC skill curve
-        print(" ---------------- First TASK")
-        print(tasks[0])
-
         scores = compute_weighted_scores(
             model, tasks, bundle, tl_config.task_loader,
             return_per_task=True,

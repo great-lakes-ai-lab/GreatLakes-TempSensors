@@ -434,9 +434,6 @@ def compute_weighted_scores(
         return keep_cache[key]
 
     for task in tasks:
-        print("---------------------------------")
-        print("In loop of compute weighted scores")
-        print(task)
         with torch.no_grad():
             mean = dp.map_array(model.mean(task), target_var_ID, unnorm=True)
             true = dp.map_array(task["Y_t"][0], target_var_ID, unnorm=True)
@@ -446,7 +443,6 @@ def compute_weighted_scores(
         true = np.asarray(true).ravel()
 
         lats = target_lats(task, dp)
-        print(f"lats shape: {lats.shape}")
         w = point_area_weights(lats)
 
         in_mask = _get_keep(task["X_t"][0]) if target_mask is not None else None
